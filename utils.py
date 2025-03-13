@@ -58,10 +58,9 @@ def append_largest_except_one(alpha, new_cells):  # checked
     return alpha
 
 
-def individualization(pi, TC, index):
+def individualization(pi, w):
     """ Perform the Individualization step I(pi, w) -> pi' """
     pi_prime = pi.copy()
-    w = TC[index]  # pick the first vertex from target cell
     for v in range(len(pi)):
         if pi[v] < pi[w] or v == w:
             continue
@@ -116,7 +115,7 @@ def target_cell_select(cells):
 '''Node Invariant/Traces, Graph Sorting Implementation'''
 
 
-def N(prefix, G, pi):
+def N(G, pi):
     """ Node Invariant function, a deterministic function that sorts partitions """
     return hash_graph(nx.quotient_graph(G,find_cells(G,pi)))
 
@@ -147,12 +146,12 @@ assert find_color(G, find_cells(G, pi_0)) == pi_0
 pi_i = refinement(G, pi_0, find_cells(G, pi_0))
 print("example initial refined color:", pi_i)
 
-pi_1I, w = individualization(pi_i, target_cell_select(find_cells(G, pi_i)),0)
+pi_1I, w = individualization(pi_i, target_cell_select(find_cells(G, pi_i))[0])
 print("example first IR individualized color:", pi_1I)
 pi_1R = refinement(G, pi_1I, [[w]])
 print("example first IR refined color:", pi_1R)
 
-pi_2I, w = individualization(pi_1R, target_cell_select(find_cells(G, pi_1R)),0)
+pi_2I, w = individualization(pi_1R, target_cell_select(find_cells(G, pi_1R))[0])
 print("example Second IR individualized color:", pi_2I)
 pi_2R = refinement(G, pi_2I, [[w]])
 print("example Second IR refined color:", pi_2R)
@@ -160,4 +159,4 @@ final_cell = find_cells(G, pi_2R)
 print("example final cell:", final_cell)
 
 print("example graph hashcode:", hash_graph(G))
-print("example Node Invariant value(quotient graph hashcode):", N([],G,pi_2R))
+print("example Node Invariant value(quotient graph hashcode):", N(G,pi_2R))
