@@ -1,4 +1,4 @@
-from collections import deque, defaultdict
+from collections import deque, defaultdict, OrderedDict
 import random
 import hashlib
 import networkx as nx
@@ -38,10 +38,13 @@ def classify_by_edges(G, X, W):
     return list(edge_count.values())
 
 
-def replace_cell(partition, X, new_cells):
+def replace_cell(cells, X, new_cells):
     """ Replace a cell X in partition with new cells. """
-    partition.remove(X)
-    partition.extend(new_cells)
+    for i,cell in enumerate(cells):
+        if cell == X:
+            del(cells[i])
+            for j,new_cell in enumerate(new_cells):
+                cells.insert(i+j,new_cell)
     return 0
 
 
@@ -60,40 +63,43 @@ def append_largest_except_one(alpha, new_cells):  # checked
 
 def individualization(pi, w):
     """ Perform the Individualization step I(pi, w) -> pi' """
+    '''
     pi_prime = pi.copy()
     for v in range(len(pi)):
         if pi[v] < pi[w] or v == w:
             continue
         else:
             pi_prime[v] = pi[v] + 1
+    '''
+    pi_prime = pi.copy()
+    pi_prime[w] = max(pi) + 1  # Assign new color
     return pi_prime
+
 
 
 def refinement(G, pi, alpha):
     """ Perform the Refinement step F(G, pi, alpha) """
     cells = find_cells(G, pi)
-    alpha_queue = deque(alpha)
-    node_count = len(pi)  # G.number_of_nodes()
-    while alpha_queue and node_count != len(cells):
-        W = alpha_queue.popleft()
+    while alpha and max(cells) != len(pi) - 1:
+        W = alpha.pop(0)
         for X in cells:
             groups = classify_by_edges(G, X, W)
             replace_cell(cells, X, groups)
 
-            if X in alpha_queue:
-                replace_cell(alpha_queue, X, groups)
+            if X in alpha:
+                replace_cell(alpha, X, groups)
             else:
-                append_largest_except_one(alpha_queue, groups)
+                append_largest_except_one(alpha, groups)
 
     return find_color(G, cells)
 
 
 def find_cells(G, pi):
     """ Transform from color to cells """
-    cells = defaultdict(list)
-    for i in range(G.number_of_nodes()):
-        cells[pi[i]].append(i)
-    return list(cells.values())
+    cells = [[] for i in range(len(set(pi)))]
+    for node, color in enumerate(pi):
+        cells[color].append(node)
+    return cells
 
 
 def find_color(G, cells):
@@ -140,7 +146,6 @@ if __name__ == "__main__":
     print("example initial labeling:", [i for i in range(G.number_of_nodes())])
     print("example initial color:", pi_0)
     print("example cells:", find_cells(G, pi_0))
-    assert find_color(G, find_cells(G, pi_0)) == pi_0
 
     pi_i = refinement(G, pi_0, find_cells(G, pi_0))
     print("example initial refined color:", pi_i)

@@ -41,7 +41,7 @@ def canonical_labeling(G):
                 NextNode.lc = cur_node.rc
                 NextNode.rc = R(v, G, NextNode.lc, cells=cur_cells)
                 NextNode.traces = N(G, NextNode.rc)
-                if NextNode.rc == [j for j in range(len(V))]:  # Check if refined color is discrete
+                if max(NextNode.rc) == len(V) - 1:  # Check if refined color is discrete
                     Leaves.append(NextNode)
                 else:
                     NodeQueue.append(NextNode)
@@ -67,16 +67,21 @@ if __name__ == "__main__":
         G3 = nx.Graph()
         G3.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 4)])  # A path of 5 nodes (not a cycle)
 
-        return G1, G2, G3
+        G4 = nx.Graph()
+        G4.add_edges_from([(0,1), (1,2), (2,3), (3,0)])
+
+        return G1, G2, G3, G4
 
 
     # Generate and print test graphs
-    G1, G2, G3 = generate_test_graphs()
+    G1, G2, G3, G4 = generate_test_graphs()
 
     C1 = canonical_labeling(G1)
     C2 = canonical_labeling(G2)
     C3 = canonical_labeling(G3)
+    C4 = canonical_labeling(G4)
 
     print("C1:", C1)
     print("C2:", C2)
     print("C3:", C3)
+    print("C4:", C4)
