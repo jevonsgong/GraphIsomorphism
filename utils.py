@@ -66,18 +66,16 @@ def individualization(pi, w):
             continue
         else:
             pi_prime[v] = pi[v] + 1
-    return pi_prime, w
+    return pi_prime
 
 
 def refinement(G, pi, alpha):
     """ Perform the Refinement step F(G, pi, alpha) """
     cells = find_cells(G, pi)
     alpha_queue = deque(alpha)
-    # print(alpha_queue)
     node_count = len(pi)  # G.number_of_nodes()
     while alpha_queue and node_count != len(cells):
         W = alpha_queue.popleft()
-        # print(W)
         for X in cells:
             groups = classify_by_edges(G, X, W)
             replace_cell(cells, X, groups)
@@ -117,7 +115,7 @@ def target_cell_select(cells):
 
 def N(G, pi):
     """ Node Invariant function, a deterministic function that sorts partitions """
-    return hash_graph(nx.quotient_graph(G,find_cells(G,pi)))
+    return hash_graph(nx.quotient_graph(G, find_cells(G, pi)))
 
 
 def hash_graph(G):
@@ -129,34 +127,37 @@ def hash_graph(G):
 
 def sort_partitions_by_quotient(G, partitions):
     """ Sorts partitions based on the hash of their quotient graphs """
-    partition_hashes = [(hash_graph(nx.quotient_graph(G,p)), p) for p in partitions]
+    partition_hashes = [(hash_graph(nx.quotient_graph(G, p)), p) for p in partitions]
     partition_hashes.sort()  # Lexicographic sorting
     return [p for _, p in partition_hashes]
 
 
-G = nx.Graph()
-G.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 0), (1, 3)])
+if __name__ == "__main__":
+    G = nx.Graph()
+    G.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 0), (1, 3)])
 
-pi_0 = color_init(G)
-print("example initial labeling:", [i for i in range(G.number_of_nodes())])
-print("example initial color:", pi_0)
-print("example cells:", find_cells(G, pi_0))
-assert find_color(G, find_cells(G, pi_0)) == pi_0
+    pi_0 = color_init(G)
+    print("example initial labeling:", [i for i in range(G.number_of_nodes())])
+    print("example initial color:", pi_0)
+    print("example cells:", find_cells(G, pi_0))
+    assert find_color(G, find_cells(G, pi_0)) == pi_0
 
-pi_i = refinement(G, pi_0, find_cells(G, pi_0))
-print("example initial refined color:", pi_i)
+    pi_i = refinement(G, pi_0, find_cells(G, pi_0))
+    print("example initial refined color:", pi_i)
 
-pi_1I, w = individualization(pi_i, target_cell_select(find_cells(G, pi_i))[0])
-print("example first IR individualized color:", pi_1I)
-pi_1R = refinement(G, pi_1I, [[w]])
-print("example first IR refined color:", pi_1R)
+    w = target_cell_select(find_cells(G, pi_i))[0]
+    pi_1I = individualization(pi_i, w)
+    print("example first IR individualized color:", pi_1I)
+    pi_1R = refinement(G, pi_1I, [[w]])
+    print("example first IR refined color:", pi_1R)
 
-pi_2I, w = individualization(pi_1R, target_cell_select(find_cells(G, pi_1R))[0])
-print("example Second IR individualized color:", pi_2I)
-pi_2R = refinement(G, pi_2I, [[w]])
-print("example Second IR refined color:", pi_2R)
-final_cell = find_cells(G, pi_2R)
-print("example final cell:", final_cell)
+    w = target_cell_select(find_cells(G, pi_1R))[0]
+    pi_2I = individualization(pi_1R, w)
+    print("example Second IR individualized color:", pi_2I)
+    pi_2R = refinement(G, pi_2I, [[w]])
+    print("example Second IR refined color:", pi_2R)
+    final_cell = find_cells(G, pi_2R)
+    print("example final cell:", final_cell)
 
-print("example graph hashcode:", hash_graph(G))
-print("example Node Invariant value(quotient graph hashcode):", N(G,pi_2R))
+    print("example graph hashcode:", hash_graph(G))
+    print("example Node Invariant value(quotient graph hashcode):", N(G, pi_2R))
