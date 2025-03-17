@@ -139,4 +139,4 @@ if __name__ == "__main__":
     print("noniso acc:", correct_noniso / amount)
     print("iso true:", true_iso / amount)
     print("noniso true:", true_noniso / amount)
-    print
+

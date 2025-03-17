@@ -5,7 +5,7 @@ import networkx as nx
 
 def R(prefix, G, pi, cells=None):
     """ General function for computing the refined coloring. """
-    if not prefix:
+    if prefix is None:
         if pi:
             return refinement(G, pi, find_cells(G, pi))
         else:
@@ -25,27 +25,32 @@ def canonical_labeling(G):
     pi_init = R(None, G, pi_0)
     root.lc = pi_0
     root.rc = pi_init
-
-    while NodeQueue:
-        cur_node = NodeQueue.popleft()
-        cur_cells = find_cells(G, cur_node.rc)
-        TC = target_cell_select(cur_cells)
-        # print("NodeQueue:", NodeQueue)
-        # print("Color:", cur_node.rc)
-        # print("TC", TC)
-        # print("Leaves:", Leaves)
-        for i, v in enumerate(TC):
-            if v not in cur_node.sequence:
-                NextNode = TreeNode(cur_node.sequence + [v])
-                cur_node.children.append(NextNode)
-                NextNode.lc = cur_node.rc
-                NextNode.rc = R(v, G, NextNode.lc, cells=cur_cells)
-                NextNode.traces = N(G, NextNode.rc)
-                if max(NextNode.rc) == len(V) - 1:  # Check if refined color is discrete
-                    Leaves.append(NextNode)
-                else:
-                    NodeQueue.append(NextNode)
-
+    if max(root.rc) == len(V) - 1:
+        Leaves.append(root)
+    else:
+        while NodeQueue:
+            print("NodeQueue:", [Node.rc for Node in NodeQueue])
+            cur_node = NodeQueue.popleft()
+            cur_cells = find_cells(G, cur_node.rc)
+            TC = target_cell_select(cur_cells)
+            #print("NodeQueue:", [Node.rc for Node in NodeQueue])
+            print("Color:", cur_node.rc)
+            print("TC", TC)
+            # print("Leaves:", Leaves)
+            for i, v in enumerate(TC):
+                if v not in cur_node.sequence:
+                    NextNode = TreeNode(cur_node.sequence + [v])
+                    cur_node.children.append(NextNode)
+                    NextNode.lc = cur_node.rc
+                    NextNode.rc = R(v, G, NextNode.lc, cells=cur_cells)
+                    NextNode.traces = N(G, NextNode.rc)
+                    print(NextNode.rc)
+                    if max(NextNode.rc) == len(V) - 1:  # Check if refined color is discrete
+                        Leaves.append(NextNode)
+                    else:
+                        NodeQueue.append(NextNode)
+    print([leaf.rc for leaf in Leaves])
+    print([leaf.traces for leaf in Leaves])
     BestNode = max(Leaves, key=lambda node: node.traces)
     C_G = BestNode.rc
 
@@ -77,11 +82,12 @@ if __name__ == "__main__":
     G1, G2, G3, G4 = generate_test_graphs()
 
     C1 = canonical_labeling(G1)
+    print('---------------')
     C2 = canonical_labeling(G2)
-    C3 = canonical_labeling(G3)
-    C4 = canonical_labeling(G4)
+    #C3 = canonical_labeling(G3)
+    #C4 = canonical_labeling(G4)
 
     print("C1:", C1)
     print("C2:", C2)
-    print("C3:", C3)
-    print("C4:", C4)
+    #print("C3:", C3)
+    #print("C4:", C4)

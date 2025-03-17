@@ -25,17 +25,24 @@ def color_init(G):
 
 
 def classify_by_edges(G, X, W):
-    """ Classify vertices in X into groups based on the number of edges to W. """
+    """
+    Classify vertices in X into groups based on the number of edges to W.
+    Returns the groups in a canonical order: sorted by the count,
+    and within each group, vertices are sorted.
+    """
     edge_count = defaultdict(list)
 
     for v in X:
-        count = 0
-        for w in W:
-            if w in list(G.neighbors(v)):
-                count += 1
+        count = sum(1 for w in W if w in G.neighbors(v))
         edge_count[count].append(v)
 
-    return list(edge_count.values())
+    # Canonically sort the groups: sort keys and sort vertices in each group
+    groups = []
+    for count in sorted(edge_count.keys()):
+        group = sorted(edge_count[count])
+        groups.append(group)
+
+    return groups
 
 
 def replace_cell(cells, X, new_cells):
@@ -95,11 +102,21 @@ def refinement(G, pi, alpha):
 
 
 def find_cells(G, pi):
-    """ Transform from color to cells """
-    cells = [[] for i in range(len(set(pi)))]
+    """Transform the color vector pi into a canonical partition.
+       Cells are sorted by their color, and within each cell, vertices are sorted.
+       Then, sort the list of cells by (color, min(cell))."""
+    cell_dict = {}
     for node, color in enumerate(pi):
-        cells[color].append(node)
-    return cells
+        cell_dict.setdefault(color, []).append(node)
+    # Sort vertices within each cell
+    for color in cell_dict:
+        cell_dict[color].sort()
+    # Create list of (color, cell) pairs, then sort by (color, min(cell))
+    cells = [(color, cell) for color, cell in cell_dict.items()]
+    cells.sort(key=lambda x: (x[0], x[1][0] if x[1] else float('inf')))
+    # Return just the list of cells (dropping the color keys)
+    return [cell for _, cell in cells]
+
 
 
 def find_color(G, cells):
@@ -112,7 +129,8 @@ def find_color(G, cells):
 
 
 def target_cell_select(cells):
-    """ Target Cell Selector """
+    """Select the target cell in a canonical way.
+       Tie-break by the smallest vertex in the cell."""
     return max(cells, key=len)
 
 
@@ -166,3 +184,4 @@ if __name__ == "__main__":
 
     print("example graph hashcode:", hash_graph(G))
     print("example Node Invariant value(quotient graph hashcode):", N(G, pi_2R))
+
