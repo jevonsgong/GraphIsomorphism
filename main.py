@@ -1,5 +1,4 @@
-from collections import deque, defaultdict
-from utils import refinement, find_cells, individualization, TreeNode, color_init, target_cell_select, N
+from utils import *
 import networkx as nx
 
 
@@ -11,6 +10,15 @@ def R(prefix, G, pi, cells=None):
         else:
             return refinement(G, pi, cells)
     return refinement(G, individualization(pi, prefix), [[prefix]])
+
+
+def graph_relabeling(G, pi):
+    mapping = {}
+    for i, node in enumerate(G.nodes):
+        mapping[node] = pi[i]
+    G = nx.relabel_nodes(G, mapping)
+    print(mapping)
+    return G
 
 
 def canonical_labeling(G):
@@ -29,13 +37,13 @@ def canonical_labeling(G):
         Leaves.append(root)
     else:
         while NodeQueue:
-            print("NodeQueue:", [Node.rc for Node in NodeQueue])
+            # print("NodeQueue:", [Node.rc for Node in NodeQueue])
             cur_node = NodeQueue.popleft()
             cur_cells = find_cells(G, cur_node.rc)
             TC = target_cell_select(cur_cells)
-            #print("NodeQueue:", [Node.rc for Node in NodeQueue])
-            print("Color:", cur_node.rc)
-            print("TC", TC)
+            # print("NodeQueue:", [Node.rc for Node in NodeQueue])
+            # print("Color:", cur_node.rc)
+            # print("TC", TC)
             # print("Leaves:", Leaves)
             for i, v in enumerate(TC):
                 if v not in cur_node.sequence:
@@ -43,17 +51,18 @@ def canonical_labeling(G):
                     cur_node.children.append(NextNode)
                     NextNode.lc = cur_node.rc
                     NextNode.rc = R(v, G, NextNode.lc, cells=cur_cells)
-                    NextNode.traces = N(G, NextNode.rc)
-                    print(NextNode.rc)
+                    NextNode.traces = hash_graph(nx.quotient_graph(G, find_cells(G,NextNode.rc)))
+                    # print(NextNode.rc)
                     if max(NextNode.rc) == len(V) - 1:  # Check if refined color is discrete
                         Leaves.append(NextNode)
                     else:
                         NodeQueue.append(NextNode)
-    print([leaf.rc for leaf in Leaves])
-    print([leaf.traces for leaf in Leaves])
+    # print([leaf.rc for leaf in Leaves])
+    # print([leaf.traces for leaf in Leaves])
     BestNode = max(Leaves, key=lambda node: node.traces)
-    C_G = BestNode.rc
-
+    C_label = BestNode.rc
+    print(C_label)
+    C_G = graph_relabeling(G, C_label)
     return C_G
 
 
@@ -73,7 +82,7 @@ if __name__ == "__main__":
         G3.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 4)])  # A path of 5 nodes (not a cycle)
 
         G4 = nx.Graph()
-        G4.add_edges_from([(0,1), (1,2), (2,3), (3,0)])
+        G4.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 0)])
 
         return G1, G2, G3, G4
 
@@ -84,10 +93,10 @@ if __name__ == "__main__":
     C1 = canonical_labeling(G1)
     print('---------------')
     C2 = canonical_labeling(G2)
-    #C3 = canonical_labeling(G3)
+    # C3 = canonical_labeling(G3)
     #C4 = canonical_labeling(G4)
 
-    print("C1:", C1)
-    print("C2:", C2)
-    #print("C3:", C3)
-    #print("C4:", C4)
+    print(C1 == C2)
+    #print(C1 == C4)
+    print(C1.nodes)
+    print(C2.nodes)

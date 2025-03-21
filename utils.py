@@ -139,6 +139,7 @@ def target_cell_select(cells):
 
 def N(G, pi):
     """ Node Invariant function, a deterministic function that sorts partitions """
+    #return hashlib.sha256("".join(str(u) for u in pi).encode()).hexdigest()
     return hash_graph(nx.quotient_graph(G, find_cells(G, pi)))
 
 
@@ -184,4 +185,5 @@ if __name__ == "__main__":
 
     print("example graph hashcode:", hash_graph(G))
     print("example Node Invariant value(quotient graph hashcode):", N(G, pi_2R))
+
 

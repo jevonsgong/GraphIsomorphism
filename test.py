@@ -121,7 +121,7 @@ if __name__ == "__main__":
     true_iso = 0
     correct_noniso = 0
     true_noniso = 0
-    amount = 1
+    amount = 100
     for i in range(amount):
         G, G_iso, G_noniso = next(test_case_generator)
         C_G = canonical_labeling(G)
