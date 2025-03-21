@@ -13,6 +13,8 @@ class TreeNode:
         self.rc = None  # Refined color
         self.traces = None  # Traces/Node Invariant
         self.children = []
+        self.parent = []
+        self.N = None #  Node Invariant Value
 
 
 '''Individualization-Refinement Implementation'''
@@ -136,11 +138,39 @@ def target_cell_select(cells):
 
 '''Node Invariant/Traces, Graph Sorting Implementation'''
 
+FUZZ_CONSTANTS = [0o37541, 0o61532, 0o05257, 0o26416]
 
-def N(G, pi):
-    """ Node Invariant function, a deterministic function that sorts partitions """
-    #return hashlib.sha256("".join(str(u) for u in pi).encode()).hexdigest()
-    return hash_graph(nx.quotient_graph(G, find_cells(G, pi)))
+
+def fuzz1(x):
+    """
+    Mimics the C++ FUZZ1 macro.
+    Given an integer x, returns x XOR-ed with a constant selected based on the lower two bits of x.
+    """
+    return x ^ FUZZ_CONSTANTS[x & 3]
+
+
+def mash_comm(l, i):
+    """
+    Mimics the C++ MASHCOMM macro.
+    'l' is the current invariant, 'i' is the new value to mix in.
+    """
+    return l + fuzz1(i)
+
+
+def compute_invariant(last_invariant, cur_trace):
+    """ Computes N """
+    invariant = last_invariant + fuzz1(cur_trace)
+    return invariant
+
+
+def compute_traces(G, pi, last_trace):
+    """ Compute Traces """
+    cells = find_cells(G, pi)
+    trace = last_trace
+    for i,cell in enumerate(cells):
+        cell_value = mash_comm(min(cell),i)
+        trace = mash_comm(trace, cell_value)
+    return trace
 
 
 def hash_graph(G):
@@ -183,7 +213,5 @@ if __name__ == "__main__":
     final_cell = find_cells(G, pi_2R)
     print("example final cell:", final_cell)
 
-    print("example graph hashcode:", hash_graph(G))
-    print("example Node Invariant value(quotient graph hashcode):", N(G, pi_2R))
 
 

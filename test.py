@@ -124,9 +124,9 @@ if __name__ == "__main__":
     amount = 100
     for i in range(amount):
         G, G_iso, G_noniso = next(test_case_generator)
-        C_G = canonical_labeling(G)
-        C_G_iso = canonical_labeling(G_iso)
-        C_G_noniso = canonical_labeling(G_noniso)
+        C_G = canonical_form(G)
+        C_G_iso = canonical_form(G_iso)
+        C_G_noniso = canonical_form(G_noniso)
         if C_G == C_G_iso:
             correct_iso += 1
         if nx.is_isomorphic(G, G_iso):

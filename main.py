@@ -13,15 +13,17 @@ def R(prefix, G, pi, cells=None):
 
 
 def graph_relabeling(G, pi):
-    mapping = {}
+    original_mapping = {list(G.nodes)[i]: i for i in range(G.number_of_nodes())}
+    color_mapping = {}
     for i, node in enumerate(G.nodes):
-        mapping[node] = pi[i]
-    G = nx.relabel_nodes(G, mapping)
-    print(mapping)
+        color_mapping[node] = pi[i]
+    G = nx.relabel_nodes(G, color_mapping)
+    G = nx.relabel_nodes(G, original_mapping)
+    print(color_mapping)
     return G
 
 
-def canonical_labeling(G):
+def canonical_form(G):
     """ Computes the canonical labeling of a graph G(V, E). """
     V = list(G.nodes())
     Leaves = []
@@ -33,6 +35,8 @@ def canonical_labeling(G):
     pi_init = R(None, G, pi_0)
     root.lc = pi_0
     root.rc = pi_init
+    root.traces = 0
+    root.N = 0
     if max(root.rc) == len(V) - 1:
         Leaves.append(root)
     else:
@@ -49,17 +53,23 @@ def canonical_labeling(G):
                 if v not in cur_node.sequence:
                     NextNode = TreeNode(cur_node.sequence + [v])
                     cur_node.children.append(NextNode)
+                    NextNode.parent.append(cur_node)
                     NextNode.lc = cur_node.rc
                     NextNode.rc = R(v, G, NextNode.lc, cells=cur_cells)
-                    NextNode.traces = hash_graph(nx.quotient_graph(G, find_cells(G,NextNode.rc)))
+                    NextNode.traces = compute_traces(G, NextNode.rc, cur_node.traces)
+                    print(NextNode.rc)
+                    print(find_cells(G,NextNode.rc))
+                    print(NextNode.traces)
+                    NextNode.N = compute_invariant(cur_node.N, NextNode.traces)
                     # print(NextNode.rc)
                     if max(NextNode.rc) == len(V) - 1:  # Check if refined color is discrete
                         Leaves.append(NextNode)
                     else:
                         NodeQueue.append(NextNode)
-    # print([leaf.rc for leaf in Leaves])
-    # print([leaf.traces for leaf in Leaves])
-    BestNode = max(Leaves, key=lambda node: node.traces)
+    print([leaf.rc for leaf in Leaves])
+    print([leaf.traces for leaf in Leaves])
+    print([leaf.N for leaf in Leaves])
+    BestNode = max(Leaves, key=lambda node: node.N)
     C_label = BestNode.rc
     print(C_label)
     C_G = graph_relabeling(G, C_label)
@@ -90,13 +100,14 @@ if __name__ == "__main__":
     # Generate and print test graphs
     G1, G2, G3, G4 = generate_test_graphs()
 
-    C1 = canonical_labeling(G1)
+    C1 = canonical_form(G1)
     print('---------------')
-    C2 = canonical_labeling(G2)
-    # C3 = canonical_labeling(G3)
-    #C4 = canonical_labeling(G4)
+    C2 = canonical_form(G2)
+    # C3 = canonical_form(G3)
+    #C4 = canonical_form(G4)
 
     print(C1 == C2)
     #print(C1 == C4)
     print(C1.nodes)
     print(C2.nodes)
+
