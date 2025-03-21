@@ -20,6 +20,7 @@ def graph_relabeling(G, pi):
     G = nx.relabel_nodes(G, color_mapping)
     G = nx.relabel_nodes(G, original_mapping)
     print(color_mapping)
+    #print(original_mapping)
     return G
 
 
@@ -27,7 +28,8 @@ def canonical_form(G):
     """ Computes the canonical labeling of a graph G(V, E). """
     V = list(G.nodes())
     Leaves = []
-
+    #original_mapping = {list(G.nodes)[i]: i for i in range(G.number_of_nodes())}
+    #G = nx.relabel_nodes(G, original_mapping)
     root = TreeNode([])  # Root is an empty sequence
     NodeQueue = deque([root])
 
@@ -106,8 +108,11 @@ if __name__ == "__main__":
     # C3 = canonical_form(G3)
     #C4 = canonical_form(G4)
 
-    print(C1 == C2)
+    print(graphs_equal(C1,C2))
     #print(C1 == C4)
     print(C1.nodes)
     print(C2.nodes)
+    print(C1.edges)
+    print(C2.edges)
+
 

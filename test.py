@@ -127,11 +127,11 @@ if __name__ == "__main__":
         C_G = canonical_form(G)
         C_G_iso = canonical_form(G_iso)
         C_G_noniso = canonical_form(G_noniso)
-        if C_G == C_G_iso:
+        if graphs_equal(C_G,C_G_iso):
             correct_iso += 1
         if nx.is_isomorphic(G, G_iso):
             true_iso += 1
-        if C_G != C_G_noniso:
+        if not graphs_equal(C_G,C_G_noniso):
             correct_noniso += 1
         if not nx.is_isomorphic(G, G_noniso):
             true_noniso += 1

@@ -72,16 +72,15 @@ def append_largest_except_one(alpha, new_cells):  # checked
 
 def individualization(pi, w):
     """ Perform the Individualization step I(pi, w) -> pi' """
-    '''
     pi_prime = pi.copy()
     for v in range(len(pi)):
         if pi[v] < pi[w] or v == w:
             continue
         else:
             pi_prime[v] = pi[v] + 1
-    '''
-    pi_prime = pi.copy()
-    pi_prime[w] = max(pi) + 1  # Assign new color
+
+    #pi_prime = pi.copy()
+    #pi_prime[w] = max(pi) + 1  # Assign new color
     return pi_prime
 
 
@@ -89,7 +88,7 @@ def individualization(pi, w):
 def refinement(G, pi, alpha):
     """ Perform the Refinement step F(G, pi, alpha) """
     cells = find_cells(G, pi)
-    while alpha and max(cells) != len(pi) - 1:
+    while alpha and max(pi) != len(pi) - 1:
         W = alpha.pop(0)
         for X in cells:
             groups = classify_by_edges(G, X, W)
@@ -118,7 +117,6 @@ def find_cells(G, pi):
     cells.sort(key=lambda x: (x[0], x[1][0] if x[1] else float('inf')))
     # Return just the list of cells (dropping the color keys)
     return [cell for _, cell in cells]
-
 
 
 def find_color(G, cells):
@@ -168,7 +166,7 @@ def compute_traces(G, pi, last_trace):
     cells = find_cells(G, pi)
     trace = last_trace
     for i,cell in enumerate(cells):
-        cell_value = mash_comm(min(cell),i)
+        cell_value = mash_comm(i,min(cell))
         trace = mash_comm(trace, cell_value)
     return trace
 
@@ -186,6 +184,27 @@ def sort_partitions_by_quotient(G, partitions):
     partition_hashes.sort()  # Lexicographic sorting
     return [p for _, p in partition_hashes]
 
+
+def graphs_equal(graph1, graph2):
+    """Check if graphs are equal.
+
+    Equality here means equal as Python objects (not isomorphism).
+    Node, edge and graph data must match.
+
+    Parameters
+    ----------
+    graph1, graph2 : graph
+
+    Returns
+    -------
+    bool
+        True if graphs are equal, False otherwise.
+    """
+    return (
+        graph1.adj == graph2.adj
+        and graph1.nodes == graph2.nodes
+        and graph1.graph == graph2.graph
+    )
 
 if __name__ == "__main__":
     G = nx.Graph()
