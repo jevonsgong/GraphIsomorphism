@@ -13,77 +13,76 @@ def R(prefix, G, pi, cells=None):
 
 
 def graph_relabeling(G, pi):
-    original_mapping = {list(G.nodes)[i]: i for i in range(G.number_of_nodes())}
-    color_mapping = {}
-    for i, node in enumerate(G.nodes):
-        color_mapping[node] = pi[i]
-    G = nx.relabel_nodes(G, color_mapping)
-    G = nx.relabel_nodes(G, original_mapping)
-    print(color_mapping)
-    #print(original_mapping)
-    return G
+    nodes_sorted = sorted(G.nodes(), key=lambda v: (pi[v], v))
+    mapping = {old: new for new, old in enumerate(nodes_sorted)}
+    return nx.relabel_nodes(G, mapping)
 
 
 def canonical_form(G):
-    """ Computes the canonical labeling of a graph G(V, E). """
-    V = list(G.nodes())
+    """ Computes the canonical form of a graph G(V, E). """
+    n = G.number_of_nodes()
     Leaves = []
-    #original_mapping = {list(G.nodes)[i]: i for i in range(G.number_of_nodes())}
-    #G = nx.relabel_nodes(G, original_mapping)
-    root = TreeNode([])  # Root is an empty sequence
+    root = TreeNode([])
     NodeQueue = deque([root])
 
+    # Compute the initial coloring and first refinement.
     pi_0 = color_init(G)
     pi_init = R(None, G, pi_0)
     root.lc = pi_0
     root.rc = pi_init
-    root.traces = 0
-    root.N = 0
-    if max(root.rc) == len(V) - 1:
+    root.invariant = node_invariant(G, root.rc, root.sequence)
+
+    # End if the initial refined partition is discrete
+    if max(root.rc) == n:
         Leaves.append(root)
     else:
+        # Breadth-first search on the tree.
         while NodeQueue:
-            # print("NodeQueue:", [Node.rc for Node in NodeQueue])
             cur_node = NodeQueue.popleft()
-            cur_cells = find_cells(G, cur_node.rc)
-            TC = target_cell_select(cur_cells)
-            # print("NodeQueue:", [Node.rc for Node in NodeQueue])
-            # print("Color:", cur_node.rc)
-            # print("TC", TC)
-            # print("Leaves:", Leaves)
-            for i, v in enumerate(TC):
+            cells = find_cells(G, cur_node.rc)
+            TC = target_cell_select(cur_node, cells)
+            # If no non-singleton cell was found, then the partition is discrete.
+            if not TC:
+                Leaves.append(cur_node)
+                continue
+            # For each vertex in the chosen target cell, create a child node by individualizing it.
+            for v in TC:
                 if v not in cur_node.sequence:
-                    NextNode = TreeNode(cur_node.sequence + [v])
-                    cur_node.children.append(NextNode)
-                    NextNode.parent.append(cur_node)
-                    NextNode.lc = cur_node.rc
-                    NextNode.rc = R(v, G, NextNode.lc, cells=cur_cells)
-                    NextNode.traces = compute_traces(G, NextNode.rc, cur_node.traces)
-                    print(NextNode.rc)
-                    print(find_cells(G,NextNode.rc))
-                    print(NextNode.traces)
-                    NextNode.N = compute_invariant(cur_node.N, NextNode.traces)
-                    # print(NextNode.rc)
-                    if max(NextNode.rc) == len(V) - 1:  # Check if refined color is discrete
-                        Leaves.append(NextNode)
+                    new_seq = cur_node.sequence + [v]
+                    child_node = TreeNode(new_seq)
+                    child_node.parent = cur_node
+                    cur_node.children.append(child_node)
+                    child_node.lc = cur_node.rc
+                    # Use R to complete the IR refinement
+                    child_node.rc = R(v, G, child_node.lc, cells=cells)
+                    child_node.invariant = node_invariant(G, child_node.rc, new_seq)
+                    # If the refined partition is discrete, add to Leaves; otherwise, add for further expansion.
+                    if max(child_node.rc) == n:
+                        Leaves.append(child_node)
                     else:
-                        NodeQueue.append(NextNode)
-    print([leaf.rc for leaf in Leaves])
-    print([leaf.traces for leaf in Leaves])
-    print([leaf.N for leaf in Leaves])
-    BestNode = max(Leaves, key=lambda node: node.N)
+                        NodeQueue.append(child_node)
+
+    # Choose the leaf with maximum invariant and, if tied, choose the lexicographically smallest branch.
+    BestNode = max(Leaves, key=lambda node: (node.invariant, tuple(node.sequence)))
     C_label = BestNode.rc
-    print(C_label)
     C_G = graph_relabeling(G, C_label)
     return C_G
 
+def canonical_representation(G):
+    """ Computes the canonical representation (a string for comparison) of a graph G(V, E). """
+    nodes = sorted(G.nodes())
+    edges = sorted(tuple(sorted(edge)) for edge in G.edges())
+    return str(nodes) + "|" + str(edges)
+
+def is_isomorphic(G1, G2):
+    return canonical_representation(canonical_form(G1))==canonical_representation(canonical_form(G2))
 
 '''Testing Isomorphism'''
 if __name__ == "__main__":
     def generate_test_graphs():
         # Graph 1 (Base graph)
         G1 = nx.Graph()
-        G1.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 0), (1, 3)])  # A simple 4-node cycle with a chord
+        G1.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 0), (1, 3)])
 
         # Graph 2 (Isomorphic to G1, relabeled)
         mapping = {0: 3, 1: 2, 2: 1, 3: 0}  # Relabel nodes
@@ -91,7 +90,7 @@ if __name__ == "__main__":
 
         # Graph 3 (Non-isomorphic: different structure)
         G3 = nx.Graph()
-        G3.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 4)])  # A path of 5 nodes (not a cycle)
+        G3.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 4)])
 
         G4 = nx.Graph()
         G4.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 0)])
@@ -103,16 +102,24 @@ if __name__ == "__main__":
     G1, G2, G3, G4 = generate_test_graphs()
 
     C1 = canonical_form(G1)
-    print('---------------')
     C2 = canonical_form(G2)
     # C3 = canonical_form(G3)
     #C4 = canonical_form(G4)
 
-    print(graphs_equal(C1,C2))
+    print(is_isomorphic(G1,G2))
+    #print(graphs_equal(C1,C4))
     #print(C1 == C4)
     print(C1.nodes)
     print(C2.nodes)
     print(C1.edges)
     print(C2.edges)
+
+
+    root = TreeNode([])
+    node1 = TreeNode([0])
+    node2 = TreeNode([3])
+    node1.parent = root
+    node2.parent = root
+
 
 

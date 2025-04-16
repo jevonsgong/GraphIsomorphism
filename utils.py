@@ -1,4 +1,4 @@
-from collections import deque, defaultdict, OrderedDict
+from collections import deque, defaultdict, OrderedDict, Counter
 import random
 import hashlib
 import networkx as nx
@@ -12,9 +12,12 @@ class TreeNode:
         self.lc = None  # Last color
         self.rc = None  # Refined color
         self.traces = None  # Traces/Node Invariant
+        self.target_cell = None # Target cell
         self.children = []
-        self.parent = []
+        self.parent = None
         self.N = None #  Node Invariant Value
+
+
 
 
 '''Individualization-Refinement Implementation'''
@@ -29,8 +32,7 @@ def color_init(G):
 def classify_by_edges(G, X, W):
     """
     Classify vertices in X into groups based on the number of edges to W.
-    Returns the groups in a canonical order: sorted by the count,
-    and within each group, vertices are sorted.
+    Returns the groups in a canonical order.(By edge count)
     """
     edge_count = defaultdict(list)
 
@@ -38,7 +40,6 @@ def classify_by_edges(G, X, W):
         count = sum(1 for w in W if w in G.neighbors(v))
         edge_count[count].append(v)
 
-    # Canonically sort the groups: sort keys and sort vertices in each group
     groups = []
     for count in sorted(edge_count.keys()):
         group = sorted(edge_count[count])
@@ -104,18 +105,15 @@ def refinement(G, pi, alpha):
 
 def find_cells(G, pi):
     """Transform the color vector pi into a canonical partition.
-       Cells are sorted by their color, and within each cell, vertices are sorted.
-       Then, sort the list of cells by (color, min(cell))."""
+       Cells are sorted by their color, and within each cell, vertices are sorted."""
     cell_dict = {}
     for node, color in enumerate(pi):
         cell_dict.setdefault(color, []).append(node)
-    # Sort vertices within each cell
     for color in cell_dict:
         cell_dict[color].sort()
     # Create list of (color, cell) pairs, then sort by (color, min(cell))
     cells = [(color, cell) for color, cell in cell_dict.items()]
     cells.sort(key=lambda x: (x[0], x[1][0] if x[1] else float('inf')))
-    # Return just the list of cells (dropping the color keys)
     return [cell for _, cell in cells]
 
 
@@ -128,61 +126,135 @@ def find_color(G, cells):
     return pi
 
 
-def target_cell_select(cells):
-    """Select the target cell in a canonical way.
-       Tie-break by the smallest vertex in the cell."""
-    return max(cells, key=len)
+def select_target_cell_from_ancestor(ancestor_target, cells):
+    """
+    Given an ancestor target cell (a list of vertices) and the current partition (cells),
+    return the first non-singleton cell in cells that is a subset of ancestor_target.
+    """
+    for cell in cells:
+        if len(cell) > 1 and set(cell).issubset(set(ancestor_target)):
+            return cell
+    return None
+
+
+def first_non_singleton(cells):
+    """
+    Return the first non-singleton cell in the given list of cells.
+    """
+    for cell in cells:
+        if len(cell) > 1:
+            return cell
+    return None
+
+
+def target_cell_select(node, cells):
+    """
+      - Starting from the immediate parent, check if the parent's target cell (if set)
+        yields a non-singleton cell (in the current partition) that is a subset of it.
+      - If found, return that cell immediately.
+      - Otherwise, move to the parent's parent and repeat.
+      - If no ancestor provides a candidate, return the first non-singleton cell in the
+        overall partition.
+
+    Returns:
+      The selected target cell (a list of vertices), or None if no non-singleton cell exists.
+    """
+    ancestor = node.parent
+    while ancestor is not None:
+        if hasattr(ancestor, 'target_cell') and ancestor.target_cell is not None:
+            candidate = select_target_cell_from_ancestor(ancestor.target_cell, cells)
+            if candidate is not None:
+                node.target_cell = candidate
+                return candidate
+        ancestor = ancestor.parent
+    # Fallback: choose the first non-singleton cell in the overall partition
+    candidate = first_non_singleton(cells)
+    node.target_cell = candidate
+    return candidate
+
 
 
 '''Node Invariant/Traces, Graph Sorting Implementation'''
 
-FUZZ_CONSTANTS = [0o37541, 0o61532, 0o05257, 0o26416]
+fuzz1 = [int("37541", 8), int("61532", 8), int("5257", 8), int("26416", 8)]
+fuzz2 = [int("6532", 8), int("70236", 8), int("35523", 8), int("62437", 8)]
 
 
-def fuzz1(x):
+def FUZZ1(x):
+    """Implements FUZZ1(x) = x XOR fuzz1[x & 3]."""
+    return x ^ fuzz1[x & 3]
+
+
+def MASHCOMM(l, i):
     """
-    Mimics the C++ FUZZ1 macro.
-    Given an integer x, returns x XOR-ed with a constant selected based on the lower two bits of x.
+    Commutative mix function.
+    In Traces, defined as:  MASHCOMM(l, i) = (l + FUZZ1(i)).
     """
-    return x ^ FUZZ_CONSTANTS[x & 3]
+    return l + FUZZ1(i)
 
 
-def mash_comm(l, i):
+def MASHNONCOMM(l, i):
     """
-    Mimics the C++ MASHCOMM macro.
-    'l' is the current invariant, 'i' is the new value to mix in.
+    Non-commutative mix function.
+    In Traces: MASHNONCOMM(l, i) = (FUZZ2(l) + i).
     """
-    return l + fuzz1(i)
+    # Here we mix using fuzz2 on l.
+    # Note: In our Python version we use l & 3 for consistency.
+    return (fuzz2[l & 3] + i)
 
 
-def compute_invariant(last_invariant, cur_trace):
-    """ Computes N """
-    invariant = last_invariant + fuzz1(cur_trace)
-    return invariant
+def MASH(l, i):
+    """
+    Alternate mix function.
+    In Traces: MASH(l, i) = (((l ^ 065435) + i) & 077777).
+    065435 (octal) -> int("65435", 8) and 077777 (octal) -> int("77777", 8).
+    """
+    return (((l ^ int("65435", 8)) + i) & int("77777", 8))
 
 
-def compute_traces(G, pi, last_trace):
-    """ Compute Traces """
-    cells = find_cells(G, pi)
-    trace = last_trace
-    for i,cell in enumerate(cells):
-        cell_value = mash_comm(i,min(cell))
-        trace = mash_comm(trace, cell_value)
-    return trace
+def MASH1(l, i):
+    """
+    Another mix function.
+    In Traces: MASH1(l, i) = ((l + (i*i)) & 077777).
+    """
+    return ((l + i * i) & int("77777", 8))
 
 
-def hash_graph(G):
-    """ Computes a deterministic hash for the graph G using sorted adjacency lists """
-    edge_list = sorted((min(u, v), max(u, v)) for u, v in G.edges())
-    edge_str = "".join(f"{u}-{v}," for u, v in edge_list)
-    return hashlib.sha256(edge_str.encode()).hexdigest()
+def CLEANUP(l):
+    """
+    Cleanup function: in Traces defined as CLEANUP(l) = ((l) % 0x7FFF).
+    """
+    return l % 0x7FFF
 
 
-def sort_partitions_by_quotient(G, partitions):
-    """ Sorts partitions based on the hash of their quotient graphs """
-    partition_hashes = [(hash_graph(nx.quotient_graph(G, p)), p) for p in partitions]
-    partition_hashes.sort()  # Lexicographic sorting
-    return [p for _, p in partition_hashes]
+# --- Invariant computation based on the Traces approach ---
+def node_invariant(G, pi, sequence):
+    """
+    Computes an invariant value in the style of Traces.
+
+    The invariant is built only from the partition (coloring) and the branch (individualization sequence).
+
+    In Traces.c, the candidate structure accumulates a "singcode" by applying MASHCOMM
+    for each singleton cell. Then the branch information is mixed in—using
+    the color values.
+
+    The final value is then cleaned-up (taken modulo 0x7FFF).
+    """
+    inv = 0
+    n = len(pi)
+    counts = Counter(pi)
+
+    # Mix in every vertex that forms a singleton cell
+    for v in range(n):
+        if counts[pi[v]] == 1:
+            inv = MASHCOMM(inv, v)
+
+    # Mix in the sequence information.
+    for v in sequence:
+        color_value = pi[v]
+        inv = MASHCOMM(inv, color_value)
+
+    return CLEANUP(inv)
 
 
 def graphs_equal(graph1, graph2):

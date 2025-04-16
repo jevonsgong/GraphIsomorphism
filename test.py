@@ -21,11 +21,6 @@ def generate_isomorphic_variant(G):
 def generate_non_isomorphic_variant(G):
     """
     Generates a non-isomorphic variant of G deterministically.
-    The method uses a fixed modification:
-      - If G is sparse (density < 0.5), try to add an edge (choose the first non-edge).
-      - Otherwise, if G is dense, remove the first edge.
-    If the chosen modification yields a graph isomorphic to G,
-    try the opposite modification.
     """
     G_noniso = G.copy()
     density = nx.density(G)
@@ -127,14 +122,18 @@ if __name__ == "__main__":
         C_G = canonical_form(G)
         C_G_iso = canonical_form(G_iso)
         C_G_noniso = canonical_form(G_noniso)
-        if graphs_equal(C_G,C_G_iso):
+        if is_isomorphic(G, G_iso):
             correct_iso += 1
         if nx.is_isomorphic(G, G_iso):
             true_iso += 1
-        if not graphs_equal(C_G,C_G_noniso):
+        if not is_isomorphic(G, G_noniso):
             correct_noniso += 1
         if not nx.is_isomorphic(G, G_noniso):
             true_noniso += 1
+    #print(C_G.nodes)
+    #print(C_G_iso.nodes)
+    #print(C_G.edges)
+    #print(C_G_iso.edges)
     print("iso acc:", correct_iso / amount)
     print("noniso acc:", correct_noniso / amount)
     print("iso true:", true_iso / amount)
