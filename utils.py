@@ -17,8 +17,35 @@ class TreeNode:
         self.parent = None
         self.N = None #  Node Invariant Value
 
+class TraceRecorder:
+    def __init__(self):
+        self.events = []        # list of (cell_id, sizes_tuple, edge_sig)
 
+    def record(self, cell_id, sizes, edge_sig):
+        """
+        cell_id   : the colour id of the cell being split
+        sizes     : tuple of fragment sizes (order preserved)
+        edge_sig  : tuple of (#edges_from_fragment0_to_each_colour, …)
+                    flattened
+        """
+        self.events.append((cell_id, sizes, edge_sig))
 
+    # Convertible to an immutable tuple so we may use it as a key / compare
+    def freeze(self):
+        return tuple(self.events)
+
+def cell_edge_signature(G, cell, colour_map, num_cols):
+    """
+    Return a tuple len(cell)×num_cols giving, for every vertex in `cell`,
+    how many edges go to each colour.  We then flatten & hash to reduce size.
+    """
+    sig = []
+    for v in cell:
+        row = [0]*num_cols
+        for nbr in G.neighbors(v):
+            row[colour_map[nbr]] += 1
+        sig.extend(row)
+    return tuple(sig)
 
 '''Individualization-Refinement Implementation'''
 
@@ -87,12 +114,27 @@ def individualization(pi, w):
 
 
 def refinement(G, pi, alpha):
-    """ Perform the Refinement step F(G, pi, alpha) """
-    cells = find_cells(G, pi)
+    """
+    Perform the classical equitable refinement BUT
+    collect a TraceRecorder describing every split event.
+    """
+    recorder = TraceRecorder()
+    cells = find_cells(pi)
+    colour_map = {v: pi[v] for v in range(len(pi))}
+    num_cols = max(pi) + 1 if pi else 0
+
     while alpha and max(pi) != len(pi) - 1:
         W = alpha.pop(0)
         for X in cells:
             groups = classify_by_edges(G, X, W)
+
+            if len(groups) > 1:
+                # --- record this split event --------------------------
+                sizes = tuple(len(g) for g in groups)
+                edge_sig = cell_edge_signature(G, X, colour_map, num_cols)
+                recorder.record(pi[X[0]], sizes, edge_sig)
+                # ------------------------------------------------------
+
             replace_cell(cells, X, groups)
 
             if X in alpha:
@@ -100,21 +142,40 @@ def refinement(G, pi, alpha):
             else:
                 append_largest_except_one(alpha, groups)
 
-    return find_color(G, cells)
+        # rebuild colour map quickly
+        pi = find_color(G, cells)
+        colour_map = {v: pi[v] for v in range(len(pi))}
+        num_cols = max(pi) + 1
+
+    return pi, recorder.freeze()
 
 
-def find_cells(G, pi):
+def find_cells(pi):
     """Transform the color vector pi into a canonical partition.
        Cells are sorted by their color, and within each cell, vertices are sorted."""
-    cell_dict = {}
-    for node, color in enumerate(pi):
-        cell_dict.setdefault(color, []).append(node)
-    for color in cell_dict:
-        cell_dict[color].sort()
-    # Create list of (color, cell) pairs, then sort by (color, min(cell))
-    cells = [(color, cell) for color, cell in cell_dict.items()]
-    cells.sort(key=lambda x: (x[0], x[1][0] if x[1] else float('inf')))
-    return [cell for _, cell in cells]
+    cell_dict = defaultdict(list)
+    for v, c in enumerate(pi):
+        cell_dict[c].append(v)
+
+    # build sortable signatures
+    sigs = []
+    for old_colour, verts in cell_dict.items():
+        verts.sort()
+        multiset = tuple(pi[v] for v in verts)
+        sig = (len(verts), multiset)
+        sig += (tuple(verts),)
+        sigs.append((sig, verts))
+
+    sigs.sort(key=lambda x: x[0])
+
+    # produce ordered cells and new colour vector
+    new_pi = [0] * len(pi)
+    cells = []
+    for new_colour, (_, verts) in enumerate(sigs):
+        cells.append(verts)
+        for v in verts:
+            new_pi[v] = new_colour
+    return cells
 
 
 def find_color(G, cells):
