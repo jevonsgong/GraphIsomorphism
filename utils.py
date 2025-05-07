@@ -11,15 +11,16 @@ class TreeNode:
         self.sequence = sequence  # Sequence of vertices
         self.lc = None  # Last color
         self.rc = None  # Refined color
-        self.traces = None  # Traces/Node Invariant
-        self.target_cell = None # Target cell
+        self.trace = None  # Traces/Node Invariant
+        self.target_cell = None  # Target cell
         self.children = []
         self.parent = None
-        self.N = None #  Node Invariant Value
+        self.N = None  # Node Invariant Value
+
 
 class TraceRecorder:
     def __init__(self):
-        self.events = []        # list of (cell_id, sizes_tuple, edge_sig)
+        self.events = []  # list of (cell_id, sizes_tuple, edge_sig)
 
     def record(self, cell_id, sizes, edge_sig):
         """
@@ -30,22 +31,23 @@ class TraceRecorder:
         """
         self.events.append((cell_id, sizes, edge_sig))
 
-    # Convertible to an immutable tuple so we may use it as a key / compare
+    # Convertible to an immutable tuple so we may use it as a key
     def freeze(self):
         return tuple(self.events)
 
-def cell_edge_signature(G, cell, colour_map, num_cols):
-    """
-    Return a tuple len(cell)×num_cols giving, for every vertex in `cell`,
-    how many edges go to each colour.  We then flatten & hash to reduce size.
-    """
-    sig = []
-    for v in cell:
-        row = [0]*num_cols
-        for nbr in G.neighbors(v):
-            row[colour_map[nbr]] += 1
-        sig.extend(row)
-    return tuple(sig)
+
+def cell_edge_signature(G, X, cells):
+    neigh = {v: set(G[v]) for v in X}
+    index = {v: i for i, cell in enumerate(cells) for v in cell}
+
+    deg_vectors = []
+    for v in sorted(X):
+        vec = [0] * len(cells)
+        for u in neigh[v]:
+            vec[index[u]] += 1
+        deg_vectors.append(tuple(vec))
+    return tuple(sorted(deg_vectors))
+
 
 '''Individualization-Refinement Implementation'''
 
@@ -77,12 +79,11 @@ def classify_by_edges(G, X, W):
 
 def replace_cell(cells, X, new_cells):
     """ Replace a cell X in partition with new cells. """
-    for i,cell in enumerate(cells):
+    for i, cell in enumerate(cells):
         if cell == X:
-            del(cells[i])
-            for j,new_cell in enumerate(new_cells):
-                cells.insert(i+j,new_cell)
-    return 0
+            del (cells[i])
+            for j, new_cell in enumerate(new_cells):
+                cells.insert(i + j, new_cell)
 
 
 def append_largest_except_one(alpha, new_cells):  # checked
@@ -107,10 +108,9 @@ def individualization(pi, w):
         else:
             pi_prime[v] = pi[v] + 1
 
-    #pi_prime = pi.copy()
-    #pi_prime[w] = max(pi) + 1  # Assign new color
+    # pi_prime = pi.copy()
+    # pi_prime[w] = max(pi) + 1  # Assign new color
     return pi_prime
-
 
 
 def refinement(G, pi, alpha):
@@ -129,13 +129,12 @@ def refinement(G, pi, alpha):
             groups = classify_by_edges(G, X, W)
 
             if len(groups) > 1:
+                replace_cell(cells, X, groups)
                 # --- record this split event --------------------------
                 sizes = tuple(len(g) for g in groups)
-                edge_sig = cell_edge_signature(G, X, colour_map, num_cols)
+                edge_sig = cell_edge_signature(G, X, cells)
                 recorder.record(pi[X[0]], sizes, edge_sig)
                 # ------------------------------------------------------
-
-            replace_cell(cells, X, groups)
 
             if X in alpha:
                 replace_cell(alpha, X, groups)
@@ -159,7 +158,7 @@ def find_cells(pi):
 
     # build sortable signatures
     sigs = []
-    for old_colour, verts in cell_dict.items():
+    for old_color, verts in cell_dict.items():
         verts.sort()
         multiset = tuple(pi[v] for v in verts)
         sig = (len(verts), multiset)
@@ -171,10 +170,10 @@ def find_cells(pi):
     # produce ordered cells and new colour vector
     new_pi = [0] * len(pi)
     cells = []
-    for new_colour, (_, verts) in enumerate(sigs):
+    for new_color, (_, verts) in enumerate(sigs):
         cells.append(verts)
         for v in verts:
-            new_pi[v] = new_colour
+            new_pi[v] = new_color
     return cells
 
 
@@ -232,7 +231,6 @@ def target_cell_select(node, cells):
     candidate = first_non_singleton(cells)
     node.target_cell = candidate
     return candidate
-
 
 
 '''Node Invariant/Traces, Graph Sorting Implementation'''
@@ -334,10 +332,11 @@ def graphs_equal(graph1, graph2):
         True if graphs are equal, False otherwise.
     """
     return (
-        graph1.adj == graph2.adj
-        and graph1.nodes == graph2.nodes
-        and graph1.graph == graph2.graph
+            graph1.adj == graph2.adj
+            and graph1.nodes == graph2.nodes
+            and graph1.graph == graph2.graph
     )
+
 
 if __name__ == "__main__":
     G = nx.Graph()
@@ -364,6 +363,3 @@ if __name__ == "__main__":
     print("example Second IR refined color:", pi_2R)
     final_cell = find_cells(G, pi_2R)
     print("example final cell:", final_cell)
-
-
-

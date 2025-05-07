@@ -3,6 +3,17 @@ from main import *
 
 import networkx as nx
 import random
+import copy
+
+from dataclasses import dataclass, field
+from typing import List, Tuple
+
+@dataclass
+class NodeState:
+    seq   : List[int]                 # individualisation sequence
+    pi    : List[int]                  # colouring vector
+    trace : Tuple                     # full event list from refinement
+    tc    : List[int]                # target cell chosen
 
 
 def generate_random_graph(n, p):
@@ -109,6 +120,77 @@ def test_generator():
         print(f"  G_noniso is isomorphic to G? {nx.is_isomorphic(G, G_noniso)}")
         print("-" * 40)
 
+def relabel_random(G):
+    perm = list(G.nodes())
+    random.shuffle(perm)
+    mapping = dict(zip(G.nodes(), perm))
+    return nx.relabel_nodes(G, mapping), mapping
+
+def equal_partitions(cells1, cells2, mapping):
+    if len(cells1)!=len(cells2):
+        return False
+    trans = [sorted(mapping[v] for v in cell) for cell in cells1]
+    return all(sorted(a)==sorted(b) for a,b in zip(trans, cells2))
+
+
+def bfs_compare(G, H, mapping, max_depth=4):
+    n     = G.number_of_nodes()
+    pi0   = [0]*n
+    alpha0= find_cells(pi0)
+
+    # refinement and node state for the root
+    def make_state(graph, pi_init, seq, trace=None):
+        if not trace:
+            trace = ()
+        tc = ()  # filled later
+        return NodeState(seq=seq, pi=pi_init, trace=trace, tc=tc)
+
+    root_G = make_state(G,  refinement(G, pi0.copy(), alpha0.copy())[0], [])
+    root_H = make_state(H,  refinement(H, pi0.copy(), alpha0.copy())[0], [])
+
+    queue = [(root_G, root_H)]
+    depth = 0
+
+    while queue and depth <= max_depth:
+        next_level=[]
+        for nG, nH in queue:
+            cellsG = find_cells(nG.pi)
+            cellsH = find_cells(nH.pi)
+            """print(nG.seq)
+            print(nG.pi)
+            print(cellsG)
+            print(nG.trace)
+            print(nH.trace)"""
+
+            assert equal_partitions(cellsG,cellsH,mapping), f"partition diverged at seq {nG.seq}"
+            #assert nG.trace == nH.trace, f"trace diverged at seq {nG.seq}"
+            nG.tc  = target_cell_select(TreeNode(nG.seq), cellsG)
+            nH.tc  = target_cell_select(TreeNode(nH.seq), cellsH)
+
+            if not nG.tc:   # leaf reached
+                continue
+
+            assert sorted(nH.tc) == sorted([mapping[v] for v in nG.tc]), \
+                   f"target cell rule broke at seq {nG.seq}"
+
+            for i in range(len(nG.tc)):
+                # ---- branch in original graph
+                v = nG.tc[i]
+                w = mapping[v]
+                new_pi,new_trace = refinement(G,
+                                    individualization(nG.pi, v),
+                                    [[v]])
+                childG = make_state(G, new_pi, nG.seq+[v],new_trace)
+
+                new_piH,new_traceH= refinement(H,
+                                    individualization(nH.pi, w),
+                                    [[w]])
+                childH = make_state(H, new_piH, nH.seq+[w],new_traceH)
+                next_level.append((childG, childH))
+        queue = next_level
+        depth += 1
+
+
 
 if __name__ == "__main__":
     test_case_generator = generate_infinite_test_cases()
@@ -138,4 +220,13 @@ if __name__ == "__main__":
     print("noniso acc:", correct_noniso / amount)
     print("iso true:", true_iso / amount)
     print("noniso true:", true_noniso / amount)
+
+    n = 16
+    regular = nx.random_regular_graph(3, n, seed=5)  # or any hard regular graph
+    mapping = {i: (i * 7) % n for i in range(n)}
+    regular_iso = nx.relabel_nodes(regular, mapping)
+
+    bfs_compare(regular, regular_iso, mapping, max_depth=6)
+    print("label-invariance test passed")
+
 

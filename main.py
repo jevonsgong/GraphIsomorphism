@@ -51,7 +51,11 @@ def canonical_form(G):
                 else:
                     NodeQueue.append(child)
 
-    best = max(Leaves, key=lambda node: (node.trace, tuple(node.sequence)))
+    max_inv = max(L.trace for L in Leaves)
+    #print(max_inv)
+    cand = [L for L in Leaves if L.trace == max_inv]
+    best = min(cand, key=lambda L: canonical_representation(
+        graph_relabeling(G, L.rc)))
     return graph_relabeling(G, best.rc)
 
 def canonical_representation(G):
@@ -66,7 +70,7 @@ def is_isomorphic(G1, G2):
 '''Testing Isomorphism'''
 if __name__ == "__main__":
     n = 16
-    G1 = nx.random_regular_graph(3, n, seed=5)
+    G1 = nx.random_regular_graph(6, n)
     G2 = nx.relabel_nodes(G1, {i: (i * 7) % n for i in range(n)})
 
     C1 = canonical_form(G1)
