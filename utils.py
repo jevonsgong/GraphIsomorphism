@@ -18,6 +18,36 @@ class TreeNode:
         self.N = None #  Node Invariant Value
 
 
+class TraceRecorder:
+    def __init__(self):
+        self.events = []        # list of (cell_id, sizes_tuple, edge_sig)
+
+    def record(self, cell_id, sizes, edge_sig):
+        """
+        cell_id   : the colour id of the cell being split
+        sizes     : tuple of fragment sizes (order preserved)
+        edge_sig  : tuple of (#edges_from_fragment0_to_each_colour, …)
+                    flattened
+        """
+        self.events.append((cell_id, sizes, edge_sig))
+
+    # Convertible to an immutable tuple so we may use it as a key / compare
+    def freeze(self):
+        return tuple(self.events)
+
+def cell_edge_signature(G, cell, colour_map, num_cols):
+    """
+    Return a tuple len(cell)×num_cols giving, for every vertex in `cell`,
+    how many edges go to each colour.  We then flatten & hash to reduce size.
+    """
+    sig = []
+    for v in cell:
+        row = [0]*num_cols
+        for nbr in G.neighbors(v):
+            row[colour_map[nbr]] += 1
+        sig.extend(row)
+    return tuple(sig)
+
 
 
 '''Individualization-Refinement Implementation'''
@@ -87,12 +117,27 @@ def individualization(pi, w):
 
 
 def refinement(G, pi, alpha):
-    """ Perform the Refinement step F(G, pi, alpha) """
+    """
+    Perform the classical equitable refinement BUT
+    collect a TraceRecorder describing every split event.
+    """
+    recorder = TraceRecorder()
     cells = find_cells(G, pi)
+    colour_map = {v: pi[v] for v in range(len(pi))}
+    num_cols   = max(pi)+1 if pi else 0
+
     while alpha and max(pi) != len(pi) - 1:
         W = alpha.pop(0)
         for X in cells:
             groups = classify_by_edges(G, X, W)
+
+            if len(groups) > 1:
+
+                sizes = tuple(len(g) for g in groups)
+                edge_sig = cell_edge_signature(G, X, colour_map, num_cols)
+                recorder.record(pi[X[0]], sizes, edge_sig)
+
+
             replace_cell(cells, X, groups)
 
             if X in alpha:
@@ -100,7 +145,12 @@ def refinement(G, pi, alpha):
             else:
                 append_largest_except_one(alpha, groups)
 
-    return find_color(G, cells)
+        # rebuild colour map quickly
+        pi = find_color(G, cells)
+        colour_map = {v: pi[v] for v in range(len(pi))}
+        num_cols   = max(pi)+1
+
+    return pi, recorder.freeze()
 
 
 def find_cells(G, pi):
@@ -277,6 +327,15 @@ def graphs_equal(graph1, graph2):
         and graph1.nodes == graph2.nodes
         and graph1.graph == graph2.graph
     )
+
+def canonical_encoding(G):
+    """
+    Return a deterministic string representation of an *already relabelled*
+    NetworkX graph `G`.  Nodes must be 0..n-1.
+    We use a sorted edge-list with each edge stored in ascending order.
+    """
+    edges = sorted(tuple(sorted(e)) for e in G.edges())
+    return f"{G.number_of_nodes()}|" + ",".join(f"{u}-{v}" for u, v in edges)
 
 if __name__ == "__main__":
     G = nx.Graph()
