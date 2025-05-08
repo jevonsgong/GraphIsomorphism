@@ -1,90 +1,83 @@
-import os
-import time
-import csv
-import queue
+import os, csv, time, multiprocessing as mp
 import networkx as nx
-import multiprocessing
-from concurrent.futures import ProcessPoolExecutor, TimeoutError
 
-from main import is_isomorphic
-
-DATA_DIR = "./benchmark_new"
+DATA_DIR   = "./benchmark_new"
 OUTPUT_LOG = "benchmark_new.csv"
-TIMEOUT_S  = 300
+TIMEOUT_S  = 600          # canonical-form limit
+GT_LIMIT   = 120           # ground-truth limit
 
-def read_dimacs_graph(path):
+# ---------- helpers --------------------------------------------------
+
+def read_dimacs(path):
     G = nx.Graph()
-    num_nodes = None
-
     with open(path) as f:
-        for line in f:
-            parts = line.split()
-            if not parts:
-                continue
-            if parts[0] == 'p' and parts[1] == 'edge':
-                num_nodes = int(parts[2])
-            elif parts[0] == 'e':
-                u, v = int(parts[1]) - 1, int(parts[2]) - 1
-                G.add_edge(u, v)
-
-    if num_nodes is None:
-        raise ValueError(f"No 'p edge' line found in {path}")
-    G.add_nodes_from(range(num_nodes))
+        for ln in f:
+            if ln.startswith("p"):
+                n = int(ln.split()[2]); G.add_nodes_from(range(n))
+            elif ln.startswith("e"):
+                u,v = map(lambda x:int(x)-1, ln.split()[1:])
+                G.add_edge(u,v)
     return G
 
-def _iso_test(args):
-    G1, G2 = args
-    return is_isomorphic(G1, G2)
+def canon_worker(path1, path2, q):
+    from main import is_isomorphic       # imports inside child
+    q.put(is_isomorphic(read_dimacs(path1), read_dimacs(path2)))
 
-def benchmark(n_pairs=451, data_dir=DATA_DIR, log_path=OUTPUT_LOG):
-    executor = ProcessPoolExecutor(max_workers=1)
-    with open(log_path, "w", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=["pair_index", "isomorphic", "ground_truth", "timed_out", "runtime_s"])
-        writer.writeheader()
+def truth_worker(path1, path2, q):
+    q.put(nx.is_isomorphic(read_dimacs(path1), read_dimacs(path2)))
 
-        for i in range(n_pairs):
-            f1 = os.path.join(data_dir, f"{i}_1")
-            f2 = os.path.join(data_dir, f"{i}_2")
-            if not os.path.exists(f1) or not os.path.exists(f2):
-                print(f"Warning: skipping missing pair {i}")
+# ---------- benchmark ------------------------------------------------
+
+def benchmark(pairs=451, data_dir=DATA_DIR, log_path=OUTPUT_LOG):
+    with open(log_path, "w", newline="") as csvf:
+        wr = csv.DictWriter(csvf,
+              ["pair","isomorphic","ground_truth",
+               "canon_timeout","truth_timeout","runtime"])
+        wr.writeheader()
+
+        for i in range(pairs):
+            f1,f2 = [os.path.join(data_dir,f"{i}_{t}") for t in (1,2)]
+            if not (os.path.exists(f1) and os.path.exists(f2)):
                 continue
-
-            G1 = read_dimacs_graph(f1)
-            G2 = read_dimacs_graph(f2)
-
-            if G1.number_of_nodes() < 300:
-                future = executor.submit(_iso_test, (G1, G2))
-                t0 = time.perf_counter()
-                try:
-                    iso = future.result(timeout=TIMEOUT_S)
-                    timed_out = False
-                except TimeoutError:
-                    iso = "TIMEOUT"
-                    timed_out = True
-                    future.cancel()
-                t1 = time.perf_counter()
-                truth = nx.is_isomorphic(G1, G2)
-                runtime = t1 - t0
-                writer.writerow({
-                    "pair_index": i,
-                    "isomorphic": iso,
-                    "ground_truth": truth,
-                    "timed_out": timed_out,
-                    "runtime_s": f"{runtime:.6f}"
-                })
-                status = "TIMEOUT" if timed_out else f"{runtime:.3f}s"
-                print(f"[{i:03d}] isomorphic={iso} ground_truth={truth} status={status}")
+            G1 = read_dimacs(f1)
+            if G1.number_of_nodes() > 500:
+                print(f"{i}:skipped")
+                wr.writerow(dict(pair=i, isomorphic="skipped", ground_truth="skipped",
+                                 canon_timeout="skipped", truth_timeout="skipped",
+                                 runtime="skipped"))
+                continue
+            # --- canonical-form process ---
+            q = mp.Queue()
+            p = mp.Process(target=canon_worker, args=(f1,f2,q))
+            t0 = time.perf_counter();   p.start()
+            p.join(TIMEOUT_S)
+            canon_to = p.is_alive()
+            if canon_to:
+                p.kill(); p.join()
+                iso = "TIMEOUT"
             else:
-                writer.writerow({
-                    "pair_index": i,
-                    "isomorphic": "skipped",
-                    "ground_truth": "skipped",
-                    "timed_out": "skipped",
-                    "runtime_s": "skipped"
-                })
-                print(f"[{i:03d}] skipped")
-    print(f"\nDone. Log written to {log_path}")
+                iso = q.get()
+            canon_time = time.perf_counter() - t0
 
+            # --- ground truth (short limit) ---
+            gt_q = mp.Queue()
+            gt_p = mp.Process(target=truth_worker, args=(f1,f2,gt_q))
+            gt_p.start();   gt_p.join(GT_LIMIT)
+            truth_to = gt_p.is_alive()
+            if truth_to:
+                gt_p.kill(); gt_p.join()
+                truth = "unknown"
+            else:
+                truth = gt_q.get()
 
+            wr.writerow(dict(pair=i, isomorphic=iso, ground_truth=truth,
+                             canon_timeout=canon_to, truth_timeout=truth_to,
+                             runtime=f"{canon_time:.3f}"))
+            status = "TIMEOUT" if canon_to else f"{canon_time:.2f}s"
+            print(f"[{i:03d}] iso={iso} truth={truth}  {status}")
+
+    print("Benchmark finished ->", log_path)
+
+# --------------------------------------------------------------------
 if __name__ == "__main__":
-    benchmark(data_dir=DATA_DIR)
+    benchmark()

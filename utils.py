@@ -245,10 +245,7 @@ def FUZZ1(x):
 
 
 def MASHCOMM(l, i):
-    """
-    Commutative mix function.
-    In Traces, defined as:  MASHCOMM(l, i) = (l + FUZZ1(i)).
-    """
+    """Commutative mix function."""
     return l + FUZZ1(i)
 
 
@@ -257,8 +254,6 @@ def MASHNONCOMM(l, i):
     Non-commutative mix function.
     In Traces: MASHNONCOMM(l, i) = (FUZZ2(l) + i).
     """
-    # Here we mix using fuzz2 on l.
-    # Note: In our Python version we use l & 3 for consistency.
     return (fuzz2[l & 3] + i)
 
 
@@ -286,51 +281,11 @@ def CLEANUP(l):
     return l % 0x7FFF
 
 
-# --- Invariant computation based on the Traces approach ---
-def node_invariant(G, pi, sequence):
-    """
-    Computes an invariant value in the style of Traces.
 
-    The invariant is built only from the partition (coloring) and the branch (individualization sequence).
-
-    In Traces.c, the candidate structure accumulates a "singcode" by applying MASHCOMM
-    for each singleton cell. Then the branch information is mixed in—using
-    the color values.
-
-    The final value is then cleaned-up (taken modulo 0x7FFF).
-    """
-    inv = 0
-    n = len(pi)
-    counts = Counter(pi)
-
-    # Mix in every vertex that forms a singleton cell
-    for v in range(n):
-        if counts[pi[v]] == 1:
-            inv = MASHCOMM(inv, v)
-
-    # Mix in the sequence information.
-    for v in sequence:
-        color_value = pi[v]
-        inv = MASHCOMM(inv, color_value)
-
-    return CLEANUP(inv)
 
 
 def graphs_equal(graph1, graph2):
-    """Check if graphs are equal.
-
-    Equality here means equal as Python objects (not isomorphism).
-    Node, edge and graph data must match.
-
-    Parameters
-    ----------
-    graph1, graph2 : graph
-
-    Returns
-    -------
-    bool
-        True if graphs are equal, False otherwise.
-    """
+    """Check if graphs are equal."""
     return (
             graph1.adj == graph2.adj
             and graph1.nodes == graph2.nodes
