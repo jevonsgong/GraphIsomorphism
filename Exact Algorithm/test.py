@@ -3,7 +3,6 @@ from main import *
 
 import networkx as nx
 import random
-import copy
 
 from dataclasses import dataclass, field
 from typing import List, Tuple
