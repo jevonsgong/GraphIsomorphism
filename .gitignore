@@ -1,3 +1,2 @@
 /benchmark_new/
-./aaa.py
-./test1.py
+*.csv
