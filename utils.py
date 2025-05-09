@@ -15,7 +15,8 @@ class TreeNode:
         self.target_cell = None  # Target cell
         self.children = []
         self.parent = None
-        self.N = None  # Node Invariant Value
+        self.code = None  # Code of Node Invariant
+        self.depth = None  # Depth of tree
 
 
 class TraceRecorder:
@@ -64,9 +65,9 @@ def classify_by_edges(G, X, W):
     Returns the groups in a canonical order.(By edge count)
     """
     edge_count = defaultdict(list)
-
+    NEIGHB = {v: set(G[v]) for v in G}
     for v in X:
-        count = sum(1 for w in W if w in G.neighbors(v))
+        count = sum(1 for w in W if w in NEIGHB[v])
         edge_count[count].append(v)
 
     groups = []
@@ -120,11 +121,10 @@ def refinement(G, pi, alpha):
     """
     recorder = TraceRecorder()
     cells = find_cells(pi)
-    colour_map = {v: pi[v] for v in range(len(pi))}
-    num_cols = max(pi) + 1 if pi else 0
+    new_code = None
 
     while alpha and max(pi) != len(pi) - 1:
-        W = alpha.pop(0)
+        W = alpha.pop()
         for X in cells:
             groups = classify_by_edges(G, X, W)
 
@@ -133,6 +133,9 @@ def refinement(G, pi, alpha):
                 # --- record this split event --------------------------
                 sizes = tuple(len(g) for g in groups)
                 edge_sig = cell_edge_signature(G, X, cells)
+                new_events = (pi[X[0]], sizes, edge_sig)
+                digest = hashlib.blake2b(str(new_events).encode(), digest_size=8).digest()
+                new_code = int.from_bytes(digest, byteorder="little", signed=False)
                 recorder.record(pi[X[0]], sizes, edge_sig)
                 # ------------------------------------------------------
 
@@ -141,12 +144,9 @@ def refinement(G, pi, alpha):
             else:
                 append_largest_except_one(alpha, groups)
 
-        # rebuild colour map quickly
         pi = find_color(G, cells)
-        colour_map = {v: pi[v] for v in range(len(pi))}
-        num_cols = max(pi) + 1
 
-    return pi, recorder.freeze()
+    return pi, recorder.freeze(), new_code
 
 
 def find_cells(pi):
@@ -167,7 +167,7 @@ def find_cells(pi):
 
     sigs.sort(key=lambda x: x[0])
 
-    # produce ordered cells and new colour vector
+    # produce ordered cells and new color vector
     new_pi = [0] * len(pi)
     cells = []
     for new_color, (_, verts) in enumerate(sigs):
@@ -244,34 +244,8 @@ def FUZZ1(x):
     return x ^ fuzz1[x & 3]
 
 
-def MASHCOMM(l, i):
-    """Commutative mix function."""
-    return l + FUZZ1(i)
-
-
-def MASHNONCOMM(l, i):
-    """
-    Non-commutative mix function.
-    In Traces: MASHNONCOMM(l, i) = (FUZZ2(l) + i).
-    """
-    return (fuzz2[l & 3] + i)
-
-
-def MASH(l, i):
-    """
-    Alternate mix function.
-    In Traces: MASH(l, i) = (((l ^ 065435) + i) & 077777).
-    065435 (octal) -> int("65435", 8) and 077777 (octal) -> int("77777", 8).
-    """
-    return (((l ^ int("65435", 8)) + i) & int("77777", 8))
-
-
-def MASH1(l, i):
-    """
-    Another mix function.
-    In Traces: MASH1(l, i) = ((l + (i*i)) & 077777).
-    """
-    return ((l + i * i) & int("77777", 8))
+def mixcode(acc, value):
+    return ( (acc ^ 0x65435) + value + fuzz1[value & 3] ) & 0xFFFF
 
 
 def CLEANUP(l):

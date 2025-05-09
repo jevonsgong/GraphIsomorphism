@@ -3,7 +3,7 @@ import networkx as nx
 
 DATA_DIR   = "./benchmark_new"
 OUTPUT_LOG = "benchmark_new.csv"
-TIMEOUT_S  = 600          # canonical-form limit
+TIMEOUT_S  = 300          # canonical-form limit
 GT_LIMIT   = 120           # ground-truth limit
 
 # ---------- helpers --------------------------------------------------

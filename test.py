@@ -177,12 +177,12 @@ def bfs_compare(G, H, mapping, max_depth=4):
                 # ---- branch in original graph
                 v = nG.tc[i]
                 w = mapping[v]
-                new_pi,new_trace = refinement(G,
+                new_pi,new_trace,new_code = refinement(G,
                                     individualization(nG.pi, v),
                                     [[v]])
                 childG = make_state(G, new_pi, nG.seq+[v],new_trace)
 
-                new_piH,new_traceH= refinement(H,
+                new_piH,new_traceH,new_codeH = refinement(H,
                                     individualization(nH.pi, w),
                                     [[w]])
                 childH = make_state(H, new_piH, nH.seq+[w],new_traceH)

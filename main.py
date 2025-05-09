@@ -1,5 +1,6 @@
 from utils import *
 import networkx as nx
+import math
 
 
 def R(prefix, G, pi, cells=None):
@@ -25,8 +26,11 @@ def canonical_form(G):
     NodeQueue = deque([root])
 
     pi0 = color_init(G)
-    pi_init, trace_init = R(None, G, pi0)
-    root.rc, root.trace = pi_init, trace_init
+    pi_init, trace_init, _ = R(None, G, pi0)
+    root.rc, root.trace, root.code, root.depth = pi_init, trace_init, 0, 0
+    level_best = {}  # depth -> code
+    best_keeper = {}  # depth -> node
+    max_code = -math.inf
 
     if max(pi_init) == n-1:
         Leaves.append(root)
@@ -34,6 +38,22 @@ def canonical_form(G):
         while NodeQueue:
             cur = NodeQueue.popleft()
             cells = find_cells(cur.rc)
+            tr = cur.code
+            depth = cur.depth
+            if depth in level_best:
+                best = level_best[depth]
+                if tr < best:  # PA
+                    continue  # discard subtree
+                if tr > best:
+                    level_best[depth] = tr
+                else:  # PB
+                    # keep one copy only
+                    if cur.sequence > best_keeper[depth].sequence:
+                        continue
+            else:
+                level_best[depth] = tr
+                best_keeper[depth] = cur
+
             TC = target_cell_select(cur, cells)
             if not TC:            # discrete
                 Leaves.append(cur)
@@ -43,19 +63,25 @@ def canonical_form(G):
                     continue
                 seq = cur.sequence + [v]
                 child = TreeNode(seq)
-                child.lc = cur.rc
-                child.rc, child.trace = R(v, G, child.lc, cells=cells)
+                child.parent = cur
+                child.lc, child.depth = cur.rc, cur.depth + 1
+                child.rc, child.trace, new_code = R(v, G, child.lc, cells=cells)
+                if not new_code:
+                    child.code = cur.code
+                else:
+                    child.code = mixcode(cur.code, new_code)
                 cur.children.append(child)
                 if max(child.rc) == n-1:
-                    Leaves.append(child)
+                    if child.code > max_code:
+                        Leaves = [child]
+                        max_code = child.code
                 else:
                     NodeQueue.append(child)
 
-    max_inv = max(L.trace for L in Leaves)
+    max_inv = max(L.code for L in Leaves)
     #print(max_inv)
-    cand = [L for L in Leaves if L.trace == max_inv]
-    best = min(cand, key=lambda L: canonical_representation(
-        graph_relabeling(G, L.rc)))
+    cand = [L for L in Leaves if L.code == max_inv]
+    best = min(cand, key=lambda L: tuple(L.rc))
     return graph_relabeling(G, best.rc)
 
 def canonical_representation(G):
