@@ -5,7 +5,6 @@ import math
 
 # ---------------------------------------------------------------------------
 DATA_DIR    = pathlib.Path("../benchmark_new")      # directory with 0_1, 0_2 ...
-OUT_LOG     = pathlib.Path("./benchmark_new.csv")
 TIMEOUT_S   = math.inf          # seconds for canonical-form run
 GT_LIMIT    = math.inf           # optional ground-truth timeout
 MAX_WORKERS = min(128-1, mp.cpu_count()-1)   # hard cap
@@ -31,10 +30,7 @@ def canon_worker(pair_idx, dir_path, out_q):
     import main   # heavy imports kept local to the worker
     d = pathlib.Path(dir_path)
     f1, f2 = d/f"{pair_idx}_1", d/f"{pair_idx}_2"
-
-    try:
         G1, G2 = read_dimacs(f1), read_dimacs(f2)
-
         t0 = time.perf_counter()
         iso = main.is_isomorphic(G1, G2)
         runtime = time.perf_counter() - t0
