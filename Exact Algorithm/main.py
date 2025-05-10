@@ -28,8 +28,10 @@ def canonical_form(G):
     pi0 = color_init(G)
     pi_init, trace_init, _ = R(None, G, pi0)
     root.rc, root.trace, root.code, root.depth = pi_init, trace_init, 0, 0
-    level_best = {}  # depth -> code
+    level_best_code = {}  # depth -> code
+    level_best_trace = {}  # depth -> trace
     best_keeper = {}  # depth -> node
+    pruned_nodes = []
     max_code = -math.inf
 
     if max(pi_init) == n-1:
@@ -37,23 +39,43 @@ def canonical_form(G):
     else:
         while NodeQueue:
             cur = NodeQueue.popleft()
-            cells = find_cells(cur.rc)
-            tr = cur.code
-            depth = cur.depth
-            if depth in level_best:
-                best = level_best[depth]
-                if tr < best:  # PA
-                    continue  # discard subtree
-                if tr > best:
-                    level_best[depth] = tr
-                else:  # PB
-                    # keep one copy only
-                    if cur.sequence > best_keeper[depth].sequence:
-                        continue
-            else:
-                level_best[depth] = tr
-                best_keeper[depth] = cur
 
+            """#  if current node is in a subtree that should be discarded, skip it
+            #  (A better subtree a found later than this node is appended to Queue)
+            if cur.parent in pruned_nodes:
+                continue
+            #  Pruning PA and PB
+            code = cur.code
+            tr = cur.trace
+            depth = cur.depth
+            if depth in level_best_code:
+                best_code = level_best_code[depth]
+                if code < best_code:  # PA
+                    continue  # discard subtree
+                if code > best_code:
+                    pruned_nodes.append(best_keeper[depth])
+                    best_keeper[depth] = cur
+                    level_best_code[depth] = code
+                else:
+                    best_trace = level_best_trace[depth]
+                    if tr < best_trace:  # PA
+                        continue  # discard subtree
+                    if tr > best_trace:
+                        pruned_nodes.append(best_keeper[depth])
+                        best_keeper[depth] = cur
+                        level_best_trace[depth] = tr
+                    else:
+                        if cur.sequence > best_keeper[depth].sequence:  # PB
+                            continue
+                        elif cur.sequence < best_keeper[depth].sequence:
+                            pruned_nodes.append(best_keeper[depth])
+                            best_keeper[depth] = cur
+            else:
+                level_best_code[depth] = code
+                level_best_trace[depth] = tr
+                best_keeper[depth] = cur"""
+
+            cells = find_cells(cur.rc)
             TC = target_cell_select(cur, cells)
             if not TC:            # discrete
                 Leaves.append(cur)
@@ -75,12 +97,13 @@ def canonical_form(G):
                     if child.code > max_code:
                         Leaves = [child]
                         max_code = child.code
+                    elif child.code == max_code:
+                        Leaves.append(child)
                 else:
                     NodeQueue.append(child)
 
-    max_inv = max(L.code for L in Leaves)
-    #print(max_inv)
-    cand = [L for L in Leaves if L.code == max_inv]
+    max_inv = max(L.trace for L in Leaves)
+    cand = [L for L in Leaves if L.trace == max_inv]
     best = min(cand, key=lambda L: tuple(L.rc))
     return graph_relabeling(G, best.rc)
 

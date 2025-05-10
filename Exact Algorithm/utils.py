@@ -65,7 +65,7 @@ def classify_by_edges(G, X, W):
     Returns the groups in a canonical order.(By edge count)
     """
     edge_count = defaultdict(list)
-    NEIGHB = {v: set(G[v]) for v in G}
+    NEIGHB = {v: set(G.neighbors(v)) for v in G}
     for v in X:
         count = sum(1 for w in W if w in NEIGHB[v])
         edge_count[count].append(v)

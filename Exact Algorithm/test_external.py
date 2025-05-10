@@ -2,10 +2,10 @@ import os, csv, time, multiprocessing as mp
 import networkx as nx
 import math
 
-DATA_DIR   = "./benchmark_new"
-OUTPUT_LOG = "benchmark_new.csv"
-TIMEOUT_S  = math.inf         # canonical-form limit
-GT_LIMIT   = math.inf           # ground-truth limit
+DATA_DIR   = "../benchmark_new"
+OUTPUT_LOG = "./benchmark_new.csv"
+TIMEOUT_S  = 1        # canonical-form limit
+GT_LIMIT   = 5          # ground-truth limit
 
 # ---------- helpers --------------------------------------------------
 
@@ -40,13 +40,13 @@ def benchmark(pairs=451, data_dir=DATA_DIR, log_path=OUTPUT_LOG):
             f1,f2 = [os.path.join(data_dir,f"{i}_{t}") for t in (1,2)]
             if not (os.path.exists(f1) and os.path.exists(f2)):
                 continue
-            #G1 = read_dimacs(f1)
-            """if G1.number_of_nodes() > 500:
+            G1 = read_dimacs(f1)
+            if G1.number_of_nodes() > 500:
                 print(f"{i}:skipped")
                 wr.writerow(dict(pair=i, isomorphic="skipped", ground_truth="skipped",
                                  canon_timeout="skipped", truth_timeout="skipped",
                                  runtime="skipped"))
-                continue"""
+                continue
             # --- canonical-form process ---
             q = mp.Queue()
             p = mp.Process(target=canon_worker, args=(f1,f2,q))
