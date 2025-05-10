@@ -30,6 +30,7 @@ def canon_worker(pair_idx, dir_path, out_q):
     import main   # heavy imports kept local to the worker
     d = pathlib.Path(dir_path)
     f1, f2 = d/f"{pair_idx}_1", d/f"{pair_idx}_2"
+    try:
         G1, G2 = read_dimacs(f1), read_dimacs(f2)
         t0 = time.perf_counter()
         iso = main.is_isomorphic(G1, G2)
