@@ -1,5 +1,4 @@
-from utils import *
-from main import *
+from Exact_Algorithm.main import *
 
 import networkx as nx
 import random

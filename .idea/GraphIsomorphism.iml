@@ -3,6 +3,11 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/benchmark_new" />
+      <excludeFolder url="file://$MODULE_DIR$/benchmark1_1_cfi" />
+      <excludeFolder url="file://$MODULE_DIR$/benchmark1_2_cfi" />
+      <excludeFolder url="file://$MODULE_DIR$/CEXP" />
+      <excludeFolder url="file://$MODULE_DIR$/EXP" />
+      <excludeFolder url="file://$MODULE_DIR$/usr" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

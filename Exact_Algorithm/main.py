@@ -21,6 +21,8 @@ def graph_relabeling(G, pi):
 
 def canonical_form(G):
     n = G.number_of_nodes()
+    if n == 0:
+        return nx.empty_graph()
     Leaves = []
     root = TreeNode([])
     NodeQueue = deque([root])
@@ -34,7 +36,7 @@ def canonical_form(G):
     pruned_nodes = []
     max_code = -math.inf
 
-    if max(pi_init) == n-1:
+    if max(pi_init) == n - 1:
         Leaves.append(root)
     else:
         while NodeQueue:
@@ -77,7 +79,7 @@ def canonical_form(G):
 
             cells = find_cells(cur.rc)
             TC = target_cell_select(cur, cells)
-            if not TC:            # discrete
+            if not TC:  # discrete
                 Leaves.append(cur)
                 continue
             for v in TC:
@@ -93,7 +95,7 @@ def canonical_form(G):
                 else:
                     child.code = mixcode(cur.code, new_code)
                 cur.children.append(child)
-                if max(child.rc) == n-1:
+                if max(child.rc) == n - 1:
                     if child.code > max_code:
                         Leaves = [child]
                         max_code = child.code
@@ -107,30 +109,33 @@ def canonical_form(G):
     best = min(cand, key=lambda L: tuple(L.rc))
     return graph_relabeling(G, best.rc)
 
+
 def canonical_representation(G):
     """ Computes the canonical representation (a string for comparison) of a graph G(V, E). """
     nodes = sorted(G.nodes())
     edges = sorted(tuple(sorted(edge)) for edge in G.edges())
     return str(nodes) + "|" + str(edges)
 
+
 def is_isomorphic(G1, G2):
-    return canonical_representation(canonical_form(G1))==canonical_representation(canonical_form(G2))
+    return canonical_representation(canonical_form(G1)) == canonical_representation(canonical_form(G2))
+
 
 '''Testing Isomorphism'''
 if __name__ == "__main__":
     n = 16
     G1 = nx.random_regular_graph(6, n)
     G2 = nx.relabel_nodes(G1, {i: (i * 7) % n for i in range(n)})
+    G3 = nx.empty_graph()
 
     C1 = canonical_form(G1)
     C2 = canonical_form(G2)
+    C3 = canonical_form(G3)
     print(nx.is_isomorphic(C1, C2))
     print(C1.edges() == C2.edges())
-    print(is_isomorphic(G1,G2))
+    print(is_isomorphic(G1, G2))
 
     print(C1.nodes)
     print(C2.nodes)
     print(C1.edges)
     print(C2.edges)
-
-

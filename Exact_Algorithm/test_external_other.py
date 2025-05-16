@@ -1,15 +1,16 @@
 import os, csv, time, pathlib, multiprocessing as mp
 import networkx as nx
 from queue import Empty
+import re
 from contextlib import closing
 import math
 
 # ---------------------------------------------------------------------------
-DATA_DIR    = pathlib.Path("../benchmark_new")      # directory with 0_1, 0_2 ...
-OUT_LOG     = pathlib.Path("./benchmark_new_noPruning.csv")
+DATA_DIR    = pathlib.Path("../benchmark1_1_cfi")      # directory with 0_1, 0_2 ...
+OUT_LOG     = pathlib.Path("./benchmark_cfi1_noPruning.csv")
 TIMEOUT_S   = 10800       # seconds for canonical-form run
 GT_LIMIT    = 10800          # optional ground-truth timeout
-MAX_WORKERS = min(128-1, mp.cpu_count()-1)   # hard cap
+MAX_WORKERS = min(128, mp.cpu_count()-1)   # hard cap
 
 # ---------- lightweight DIMACS reader ---------------------------------------
 def read_dimacs(path):
@@ -24,14 +25,14 @@ def read_dimacs(path):
     return G
 
 # ---------- worker ----------------------------------------------------------
-def canon_worker(pair_idx, dir_path, out_q):
+def canon_worker(pair_idx, dir_path, pair, out_q):
     """
     Executed in a separate process.
     Sends the result dict through out_q.
     """
     import main   # heavy imports kept local to the worker
     d = pathlib.Path(dir_path)
-    f1, f2 = d/f"{pair_idx}_1", d/f"{pair_idx}_2"
+    f1, f2 = d/f"{pair[0]}-1", d/f"{pair[0]}-2"
     G1, G2 = read_dimacs(f1), read_dimacs(f2)
     try:
         t0 = time.perf_counter()
@@ -67,10 +68,10 @@ def canon_worker(pair_idx, dir_path, out_q):
         })
 
 # ---------- driver ----------------------------------------------------------
-def benchmark(n_pairs=451, data_dir=DATA_DIR, csv_path=OUT_LOG):
+def benchmark(pairs, data_dir=DATA_DIR, csv_path=OUT_LOG):
     sem   = mp.Semaphore(MAX_WORKERS)      # concurrency limiter
     tasks = []                             # (proc, queue, start_time)
-
+    n_pairs = len(pairs)
     with open(csv_path, "w", newline="") as fh:
         wr = csv.DictWriter(
             fh, ["pair_index","isomorphic","ground_truth",
@@ -78,9 +79,6 @@ def benchmark(n_pairs=451, data_dir=DATA_DIR, csv_path=OUT_LOG):
         wr.writeheader(); fh.flush()
 
         for i in range(n_pairs):
-            if not (data_dir/f"{i}_1").exists():
-                continue                   # silently skip missing pair
-
             """G1 = read_dimacs(f1)
             if G1.number_of_nodes() > 1000:
                 print(f"{pair_index}:skipped")
@@ -90,7 +88,7 @@ def benchmark(n_pairs=451, data_dir=DATA_DIR, csv_path=OUT_LOG):
             sem.acquire()                  # block if 128 already running
             q = mp.Queue()
             p = mp.Process(target=canon_worker,
-                           args=(i, str(data_dir), q))
+                           args=(i, str(data_dir), pairs[i], q))
             p.start()
             tasks.append((i, p, q, time.perf_counter()))
 
@@ -151,4 +149,18 @@ def _harvest(task_list, writer, fh, sem, final=False):
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    benchmark()
+    pattern = re.compile(r"(.+)-([12])$")
+    groups = {}
+    for p in DATA_DIR.iterdir():
+        if p.is_file():
+            m = pattern.fullmatch(p.stem)
+            if m:
+                base, idx = m.groups()
+                groups.setdefault(base, {})[idx] = p
+
+    pairs = [(base, d["1"], d["2"])
+             for base, d in groups.items() if {"1", "2"} <= d.keys()]
+    pairs.sort(key=lambda x: x[0])
+    print(len(pairs))
+    print(pairs[0])
+    benchmark(pairs)
