@@ -226,5 +226,3 @@ if __name__ == "__main__":
 
     bfs_compare(regular, regular_iso, mapping, max_depth=6)
     print("label-invariance test passed")
-
-

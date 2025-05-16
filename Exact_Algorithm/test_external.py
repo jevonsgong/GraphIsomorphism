@@ -32,8 +32,8 @@ def canon_worker(pair_idx, dir_path, out_q):
     import main   # heavy imports kept local to the worker
     d = pathlib.Path(dir_path)
     f1, f2 = d/f"{pair_idx}_1", d/f"{pair_idx}_2"
-    G1, G2 = read_dimacs(f1), read_dimacs(f2)
     try:
+        G1, G2 = read_dimacs(f1), read_dimacs(f2)
         t0 = time.perf_counter()
         iso = main.is_isomorphic(G1, G2)
         runtime = time.perf_counter() - t0
@@ -120,7 +120,6 @@ def _harvest(task_list, writer, fh, sem, final=False):
 
         if proc.is_alive() and limit <= 0:             # ------ timeout
             proc.kill(); proc.join()
-            print(f"index:{idx}  TIMEOUT")
             writer.writerow({
                 "pair_index": idx, "isomorphic": "TIMEOUT",
                 "ground_truth": "unknown",

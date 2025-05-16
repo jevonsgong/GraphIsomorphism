@@ -5,3 +5,6 @@
 /CEXP/
 /usr/
 *.csv
+*.pyc
+*.pyc
+.idea/.name

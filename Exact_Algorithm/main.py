@@ -138,4 +138,8 @@ if __name__ == "__main__":
     print(C1.nodes)
     print(C2.nodes)
     print(C1.edges)
+
     print(C2.edges)
+
+    print(C2.edges)
+
