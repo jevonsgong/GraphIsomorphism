@@ -1,166 +1,176 @@
-import os, csv, time, pathlib, multiprocessing as mp
-import networkx as nx
-from queue import Empty
+import concurrent.futures as cf
+import csv
+import pathlib
 import re
-from contextlib import closing
-import math
+import time
+import resource
+import networkx as nx
 
-# ---------------------------------------------------------------------------
-DATA_DIR    = pathlib.Path("../benchmark1_1_cfi")      # directory with 0_1, 0_2 ...
-OUT_LOG     = pathlib.Path("./benchmark_cfi1_noPruning.csv")
-TIMEOUT_S   = 10800       # seconds for canonical-form run
-GT_LIMIT    = 10800          # optional ground-truth timeout
-MAX_WORKERS = min(128, mp.cpu_count()-1)   # hard cap
+from main import is_isomorphic
 
-# ---------- lightweight DIMACS reader ---------------------------------------
+DATA_DIR      = pathlib.Path("../benchmark1_1_cfi")
+OUT_LOG       = pathlib.Path("./benchmark_cfi1_withPruning.csv")
+TIMEOUT       = 18000            # seconds per pair
+MAX_NODES     = 1000
+MAX_WORKERS   = 16
+MEM_LIMIT  = 8 * 1024**3
+
+
+def impose_limits():
+    """Called in the worker just after fork/spawn."""
+    # wall-clock timeout handled by alarm in worker function
+    # RLIMIT_AS = virtual memory incl. swap
+    resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT, MEM_LIMIT))
+    # RLIMIT_NOFILE just in case
+    resource.setrlimit(resource.RLIMIT_NOFILE, (1024, 1024))
+
 def read_dimacs(path):
+    """Minimal DIMACS-like reader (p/e lines only, 1-based)."""
     G = nx.Graph()
-    with open(path) as fh:
-        for ln in fh:
-            if ln.startswith("p"):
-                n = int(ln.split()[2]);  G.add_nodes_from(range(n))
-            elif ln.startswith("e"):
-                u, v = (int(x)-1 for x in ln.split()[1:3])
-                G.add_edge(u, v)
+    with path.open("r") as f:
+        for line in f:
+            if not line or line[0] == "c":
+                continue
+            if line[0] == "p":
+                _, _, nv, _ = line.split()
+                G.add_nodes_from(range(int(nv)))
+            elif line[0] == "e":
+                _, u, v = line.split()
+                G.add_edge(int(u) - 1, int(v) - 1)
     return G
 
-# ---------- worker ----------------------------------------------------------
-def canon_worker(pair_idx, dir_path, pair, out_q):
-    """
-    Executed in a separate process.
-    Sends the result dict through out_q.
-    """
-    import main   # heavy imports kept local to the worker
-    d = pathlib.Path(dir_path)
-    f1, f2 = d/f"{pair[0]}-1", d/f"{pair[0]}-2"
-    G1, G2 = read_dimacs(f1), read_dimacs(f2)
+def run_pair(pair_index, f1, f2):
+    """Worker for one graph pair."""
     try:
-        t0 = time.perf_counter()
-        iso = main.is_isomorphic(G1, G2)
-        runtime = time.perf_counter() - t0
+        G1 = read_dimacs(f1)
+        G2 = read_dimacs(f2)
     except Exception as exc:
-        iso, runtime = f"error:{exc}", -1
+        return dict(pair_index=pair_index,
+                    file1=f1.name,
+                    file2=f2.name,
+                    error=f"read_error:{exc}")
 
-    # optional short truth run
-    truth, truth_to = "noRun", "noRun"
+    '''if G1.number_of_nodes() > MAX_NODES:
+        print(f"[{pair_index:04}] skipped (too large)")
+        return dict(pair_index=pair_index,
+                    file1=f1.name,
+                    file2=f2.name,
+                    skipped=True)'''
+
+    t0 = time.perf_counter()
     try:
-        truth = nx.is_isomorphic(G1, G2)
-        truth_to = False
-    except Exception:
-        truth, truth_to = "unknown", True
+        iso, log_str = is_isomorphic(G1, G2)
+    except MemoryError:
+        return dict(pair_index=pair_index,
+                    isomorphic=f"memory error")
     finally:
+        import gc; gc.collect()
 
-        print({
-            "pair_index":  pair_idx,
-            "isomorphic":  iso,
-            "ground_truth": truth,
-            "canon_timeout": False,
-            "truth_timeout": truth_to,
-            "runtime_s": f"{runtime:.4f}" if runtime >= 0 else "err"
-        })
-        out_q.put({
-            "pair_index":  pair_idx,
-            "isomorphic":  iso,
-            "ground_truth": truth,
-            "canon_timeout": False,
-            "truth_timeout": truth_to,
-            "runtime_s": f"{runtime:.4f}" if runtime >= 0 else "err"
-        })
+    elapsed = time.perf_counter() - t0
+    print(f"[{pair_index:04}] isomorphic={iso} time={elapsed:.2f}s", flush=True)
+    print(log_str)
 
-# ---------- driver ----------------------------------------------------------
-def benchmark(pairs, data_dir=DATA_DIR, csv_path=OUT_LOG):
-    sem   = mp.Semaphore(MAX_WORKERS)      # concurrency limiter
-    tasks = []                             # (proc, queue, start_time)
-    n_pairs = len(pairs)
-    with open(csv_path, "w", newline="") as fh:
-        wr = csv.DictWriter(
-            fh, ["pair_index","isomorphic","ground_truth",
-                 "canon_timeout","truth_timeout","runtime_s"])
-        wr.writeheader(); fh.flush()
+    t1 = time.perf_counter()
+    try:
+        nx_iso = nx.is_isomorphic(G1, G2)
+    except MemoryError:
+        return dict(pair_index=pair_index,
+                    isomorphic=f"memory error")
+    finally:
+        import gc; gc.collect()
 
-        for i in range(n_pairs):
-            """G1 = read_dimacs(f1)
-            if G1.number_of_nodes() > 1000:
-                print(f"{pair_index}:skipped")
-                continue"""
+    nx_elapsed = time.perf_counter() - t1
+    print(f"[{pair_index:04}] nx.is_isomorphic={nx_iso} time={nx_elapsed:.2f}s", flush=True)
 
-            # ----- launch a worker --------------------------------------
-            sem.acquire()                  # block if 128 already running
-            q = mp.Queue()
-            p = mp.Process(target=canon_worker,
-                           args=(i, str(data_dir), pairs[i], q))
-            p.start()
-            tasks.append((i, p, q, time.perf_counter()))
+    return dict(pair_index=pair_index,
+                isomorphic=iso,
+                time_s=round(elapsed, 2),
+                nx_isomorphic=nx_iso,
+                nx_time_s=round(nx_elapsed, 2),)
 
-            # ----- collect finished / timed-out workers -----------------
-            tasks = _harvest(tasks, wr, fh, sem)
-
-        # wait for all remaining workers
-        while tasks:
-            tasks = _harvest(tasks, wr, fh, sem, final=True)
-
-    print("Benchmark finished ➜", csv_path)
-
-# ---------- helper to reap children ----------------------------------------
-def _harvest(task_list, writer, fh, sem, final=False):
-    """
-    Try to join() each child for up to 0 s (poll) unless `final` is True,
-    in which case we wait whichever is shorter: remaining timeout or 1 s.
-    Returns the pruned task list.
-    """
-    now  = time.perf_counter()
-    keep = []
-
-    for idx, proc, q, t0 in task_list:
-        limit = TIMEOUT_S - (now - t0)
-        join_t = max(0.0, min(1.0, limit)) if not final else max(0.0, min(1.0, limit))
-        proc.join(join_t)
-
-        if proc.is_alive() and limit <= 0:             # ------ timeout
-            proc.kill(); proc.join()
-            print(f"index:{idx}  TIMEOUT")
-            writer.writerow({
-                "pair_index": idx, "isomorphic": "TIMEOUT",
-                "ground_truth": "unknown",
-                "canon_timeout": True, "truth_timeout": True,
-                "runtime_s": f">{TIMEOUT_S}"
-            }); fh.flush()
-            sem.release()                              # free a slot
-        elif not proc.is_alive():                      # ------ finished
+def existing_pair_indices(csv_path):
+    """Read previous results and return a set of completed pair indices."""
+    if not csv_path.exists():
+        return set()
+    indices = set()
+    with csv_path.open("r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
             try:
-                res = q.get_nowait()  # non-blocking
-            except Empty:
-                res = {"pair_index": idx,
-                       "isomorphic": "worker_crashed",
-                       "ground_truth": "unknown",
-                       "canon_timeout": False,
-                       "truth_timeout": False,
-                       "runtime_s": "err"
-                    }
-            writer.writerow(res)
-            fh.flush()
-            msg = res['runtime_s']
-            print(f"[{idx:03}] iso={res['isomorphic']} truth={res['ground_truth']}  {msg}")
-            sem.release()
-        else:                                          # still running
-            keep.append((idx, proc, q, t0))
+                idx = int(row["pair_index"])
+                indices.add(idx)
+            except Exception:
+                continue
+    return indices
 
-    return keep
-
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
+def find_pairs():
+    all_files = list(DATA_DIR.iterdir())
     pattern = re.compile(r"(.+)-([12])$")
     groups = {}
-    for p in DATA_DIR.iterdir():
+    for p in all_files:
         if p.is_file():
             m = pattern.fullmatch(p.stem)
             if m:
-                base, idx = m.groups()
-                groups.setdefault(base, {})[idx] = p
-
-    pairs = [(base, d["1"], d["2"])
-             for base, d in groups.items() if {"1", "2"} <= d.keys()]
+                idx, v = m.groups()
+                groups.setdefault(idx, {})[v] = p
+    pairs = [(idx, d["1"], d["2"])
+             for idx, d in groups.items() if {"1", "2"} <= d.keys()]
     pairs.sort(key=lambda x: x[0])
-    print(len(pairs))
-    print(pairs[0])
-    benchmark(pairs)
+    return pairs
+
+def main():
+    OUT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    pairs = find_pairs()
+    print(f"Found {len(pairs)} pairs to test. Output: {OUT_LOG}")
+
+    done_indices = existing_pair_indices(OUT_LOG)
+    print(f"{len(done_indices)} pairs already completed. Skipping these.")
+
+    todo_pairs = [(i, f1, f2) for i, (_, f1, f2) in enumerate(pairs) if i not in done_indices]
+    print(f"{len(todo_pairs)} pairs to run in this round. Running with {MAX_WORKERS} workers.")
+
+    if not todo_pairs:
+        print("No new pairs to run. Exiting.")
+        return
+
+    # Append mode (create header if missing)
+    need_header = not OUT_LOG.exists() or OUT_LOG.stat().st_size == 0
+    fout = OUT_LOG.open("a", newline="")
+    fieldnames = ["pair_index", "isomorphic",
+                  "time_s",
+                  "nx_isomorphic", "nx_time_s"]
+    writer = csv.DictWriter(fout, fieldnames=fieldnames, extrasaction="ignore")
+    if need_header:
+        writer.writeheader()
+        fout.flush()
+
+    with cf.ProcessPoolExecutor(max_workers=MAX_WORKERS,initializer=impose_limits) as pool:
+        futures = {}
+        for i, f1, f2 in todo_pairs:
+            futures[pool.submit(run_pair, i, f1, f2)] = i
+            print(f"pair {i} submitted")
+
+        done_cnt = 0
+        for fut in cf.as_completed(futures):
+            i = futures[fut]
+            try:
+                result = fut.result()
+            except cf.TimeoutError:
+                result = dict(pair_index=i,
+                              isomorphic="timeout", timed_out=True)
+                print(f"[{i:04}] TIMEOUT", flush=True)
+            except Exception as exc:
+                result = dict(pair_index=i,
+                              isomorphic="crashed")
+                print(f"[{i:04}] CRASHED", flush=True)
+            writer.writerow(result)
+            fout.flush()
+            done_cnt += 1
+            if done_cnt % 10 == 0 or done_cnt == len(futures):
+                print(f"{done_cnt}/{len(futures)} pairs finished.", flush=True)
+
+    fout.close()
+    print("All pairs completed or skipped.")
+
+if __name__ == "__main__":
+    main()

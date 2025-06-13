@@ -17,6 +17,9 @@ class TreeNode:
         self.parent = None
         self.code = None  # Code of Node Invariant
         self.depth = None  # Depth of tree
+        self.best_code: int = -1
+        self.best_trace: tuple = ()
+        self.best_child: ["TreeNode"] = None
 
 
 class TraceRecorder:
@@ -36,14 +39,6 @@ class TraceRecorder:
     def freeze(self):
         return tuple(self.events)
 
-def trace_cmp(a,b):
-    m = min(len(a), len(b))
-    if a[:m] != b[:m]:
-        return -1 if a[:m] < b[:m] else 1
-    if len(a)==len(b):
-        return 0
-    return None
-
 
 def cell_edge_signature(G, X, cells):
     neigh = {v: set(G[v]) for v in X}
@@ -56,6 +51,19 @@ def cell_edge_signature(G, X, cells):
             vec[index[u]] += 1
         deg_vectors.append(tuple(vec))
     return tuple(sorted(deg_vectors))
+
+
+def trace_cmp(a,b):
+    m = min(len(a), len(b))
+    if a[:m] != b[:m]:
+        return -1 if a[:m] < b[:m] else 1
+    if len(a)==len(b):
+        return 0
+    return None            # prefix
+
+def is_trace_complete(G, rc):
+    n = G.number_of_nodes()
+    return max(rc) == n-1  # true only at leaves; safest
 
 
 '''Individualization-Refinement Implementation'''
@@ -122,14 +130,14 @@ def individualization(pi, w):
     return pi_prime
 
 
-def refinement(G, pi, alpha, level_best_trace=(tuple(), tuple(), tuple())):
+def refinement(G, pi, alpha):
     """
     Perform the classical equitable refinement BUT
     collect a TraceRecorder describing every split event.
     """
     recorder = TraceRecorder()
     cells = find_cells(pi)
-    new_code = 0
+    new_code = None
 
     while alpha and max(pi) != len(pi) - 1:
         W = alpha.pop()
@@ -143,91 +151,18 @@ def refinement(G, pi, alpha, level_best_trace=(tuple(), tuple(), tuple())):
                 edge_sig = cell_edge_signature(G, X, cells)
                 new_events = (pi[X[0]], sizes, edge_sig)
                 digest = hashlib.blake2b(str(new_events).encode(), digest_size=8).digest()
-                new_code = mixcode(new_code, int.from_bytes(digest, byteorder="little", signed=False))
+                new_code = int.from_bytes(digest, byteorder="little", signed=False)
                 recorder.record(pi[X[0]], sizes, edge_sig)
-                """if level_best_trace > recorder.freeze():
-                    return None,None,"Pruned"""
+                # ------------------------------------------------------
 
             if X in alpha:
                 replace_cell(alpha, X, groups)
             else:
                 append_largest_except_one(alpha, groups)
 
-        pi = find_color(cells)
+        pi = find_color(G, cells)
 
     return pi, recorder.freeze(), new_code
-
-
-def run_experimental_path(G, pi, leafDB):
-    recorder = TraceRecorder()
-    new_code = 0
-    fillDB = False
-    while max(pi) != len(pi) - 1:
-        v = random.choice(first_non_singleton(find_cells(pi)))
-        new_pi = individualization(pi, v)
-        alpha = [[v]]
-        cells = find_cells(new_pi)
-        recorder = TraceRecorder()
-        new_code = 0
-        while alpha and max(new_pi) != len(new_pi) - 1:
-            W = alpha.pop()
-            for X in cells:
-                groups = classify_by_edges(G, X, W)
-
-                if len(groups) > 1:
-                    replace_cell(cells, X, groups)
-                    # --- record this split event --------------------------
-                    sizes = tuple(len(g) for g in groups)
-                    edge_sig = cell_edge_signature(G, X, cells)
-                    new_events = (pi[X[0]], sizes, edge_sig)
-                    digest = hashlib.blake2b(str(new_events).encode(), digest_size=8).digest()
-                    new_code = mixcode(new_code, int.from_bytes(digest, byteorder="little", signed=False))
-                    recorder.record(pi[X[0]], sizes, edge_sig)
-
-                if X in alpha:
-                    replace_cell(alpha, X, groups)
-                else:
-                    append_largest_except_one(alpha, groups)
-
-            new_pi = find_color(cells)
-
-        if max(new_pi) == len(new_pi) - 1:
-            if not leafDB:
-                fillDB = True
-                for v in first_non_singleton(find_cells(pi)):
-                    pi_ind = individualization(pi, v)
-                    cells = find_cells(pi_ind)
-                    alpha = [[v]]
-                    recorder = TraceRecorder()
-                    new_code = 0
-                    while alpha and max(pi_ind) != len(pi_ind) - 1:
-                        W = alpha.pop()
-                        for X in cells:
-                            groups = classify_by_edges(G, X, W)
-
-                            if len(groups) > 1:
-                                replace_cell(cells, X, groups)
-                                # --- record this split event --------------------------
-                                sizes = tuple(len(g) for g in groups)
-                                edge_sig = cell_edge_signature(G, X, cells)
-                                new_events = (pi[X[0]], sizes, edge_sig)
-                                digest = hashlib.blake2b(str(new_events).encode(), digest_size=8).digest()
-                                new_code = mixcode(new_code, int.from_bytes(digest, byteorder="little", signed=False))
-                                recorder.record(pi[X[0]], sizes, edge_sig)
-
-                            if X in alpha:
-                                replace_cell(alpha, X, groups)
-                            else:
-                                append_largest_except_one(alpha, groups)
-
-                        pi_ind = find_color(cells)
-                    leafDB[new_code] = (pi_ind, recorder.freeze())
-            else:
-                pass
-
-        pi = new_pi
-
-    return pi, recorder.freeze(), new_code, leafDB, fillDB
 
 
 def find_cells(pi):
@@ -258,10 +193,9 @@ def find_cells(pi):
     return cells
 
 
-def find_color(cells):
+def find_color(G, cells):
     """ Transform from cells to color """
-    n = sum(len(cell) for cell in cells)
-    pi = [0] * n
+    pi = [0] * G.number_of_nodes()
     for k, cell in enumerate(cells):
         for v in cell:
             pi[v] = k
@@ -327,7 +261,7 @@ def FUZZ1(x):
 
 
 def mixcode(acc, value):
-    return ((acc ^ 0x65435) + value + fuzz1[value & 3]) & 0xFFFF
+    return ( (acc ^ 0x65435) + value + fuzz1[value & 3] ) & 0xFFFF
 
 
 def CLEANUP(l):
@@ -335,6 +269,9 @@ def CLEANUP(l):
     Cleanup function: in Traces defined as CLEANUP(l) = ((l) % 0x7FFF).
     """
     return l % 0x7FFF
+
+
+
 
 
 def graphs_equal(graph1, graph2):

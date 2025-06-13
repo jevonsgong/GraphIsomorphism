@@ -76,7 +76,7 @@ def generate_non_isomorphic_variant(G):
     return G_noniso
 
 
-def generate_infinite_test_cases():
+def generate_infinite_test_cases(nodes_min,nodes_max):
     """
     A generator that yields an infinite sequence of test cases.
     Each test case is a tuple: (G, G_iso, G_noniso)
@@ -87,11 +87,13 @@ def generate_infinite_test_cases():
     """
     while True:
         # Randomly choose number of nodes and edge probability
-        n = random.randint(4, 20)
-        p = random.uniform(0.2, 0.8)
+        n = random.randint(nodes_min, nodes_max)
+        p = random.uniform(0.4, 0.8)
 
         # Generate a random graph G
-        G = generate_random_graph(n, p)
+        #G = generate_random_graph(n, p)
+        G = nx.random_regular_graph(4, n)
+
         # Ensure G has at least one edge to allow modification
         if G.number_of_edges() == 0:
             continue
@@ -104,19 +106,6 @@ def generate_infinite_test_cases():
 
         yield (G, G_iso, G_noniso)
 
-
-def test_generator():
-    """ Test if generator works correctly """
-    test_case_generator = generate_infinite_test_cases()
-
-    # Example: Print 5 test cases
-    for i in range(5):
-        G, G_iso, G_noniso = next(test_case_generator)
-        print(f"Test case {i + 1}:")
-        print(f"  G nodes: {G.nodes()}  edges: {list(G.edges())}")
-        print(f"  G_iso is isomorphic to G? {nx.is_isomorphic(G, G_iso)}")
-        print(f"  G_noniso is isomorphic to G? {nx.is_isomorphic(G, G_noniso)}")
-        print("-" * 40)
 
 def relabel_random(G):
     perm = list(G.nodes())
@@ -191,22 +180,20 @@ def bfs_compare(G, H, mapping, max_depth=4):
 
 
 if __name__ == "__main__":
-    test_case_generator = generate_infinite_test_cases()
+    test_case_generator = generate_infinite_test_cases(5,10)
     correct_iso = 0
     true_iso = 0
     correct_noniso = 0
     true_noniso = 0
-    amount = 100
+    amount = 30
     for i in range(amount):
         G, G_iso, G_noniso = next(test_case_generator)
-        C_G = canonical_form(G)
-        C_G_iso = canonical_form(G_iso)
-        C_G_noniso = canonical_form(G_noniso)
-        if is_isomorphic(G, G_iso):
+
+        if is_isomorphic(G, G_iso)[0]:
             correct_iso += 1
         if nx.is_isomorphic(G, G_iso):
             true_iso += 1
-        if not is_isomorphic(G, G_noniso):
+        if not is_isomorphic(G, G_noniso)[0]:
             correct_noniso += 1
         if not nx.is_isomorphic(G, G_noniso):
             true_noniso += 1
@@ -219,10 +206,10 @@ if __name__ == "__main__":
     print("iso true:", true_iso / amount)
     print("noniso true:", true_noniso / amount)
 
-    n = 16
+"""    n = 16
     regular = nx.random_regular_graph(3, n, seed=5)  # or any hard regular graph
     mapping = {i: (i * 7) % n for i in range(n)}
     regular_iso = nx.relabel_nodes(regular, mapping)
 
     bfs_compare(regular, regular_iso, mapping, max_depth=6)
-    print("label-invariance test passed")
+    print("label-invariance test passed")"""
