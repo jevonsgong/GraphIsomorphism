@@ -2,5 +2,12 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Graphormer" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Graphormer/distributional_graphormer/catalyst-adsorption/fairseq" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Graphormer/distributional_graphormer/catalyst-adsorption/fairseq/fairseq/model_parallel/megatron" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Graphormer/distributional_graphormer/property-guided/fairseq" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Graphormer/distributional_graphormer/property-guided/fairseq/fairseq/model_parallel/megatron" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Graphormer/fairseq" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Graphormer/fairseq/fairseq/model_parallel/megatron" vcs="Git" />
   </component>
 </project>

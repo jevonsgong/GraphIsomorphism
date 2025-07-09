@@ -58,7 +58,7 @@ def canonical_form(G):
                 for k in range(1, len(seq) + 1):
                     pruned_seq.add(seq[:k])
 
-            if tuple(cur.sequence) in pruned_seq:
+            """if tuple(cur.sequence) in pruned_seq:
                 continue
 
             leaf_pi, leaf_trace, leaf_code, leafDB, fillDB = \
@@ -98,7 +98,7 @@ def canonical_form(G):
 
                     NodeQueue = deque(filter(lambda n: not deletable(n), NodeQueue))
                     Prune_by_PC += prev_len - len(NodeQueue)
-
+"""
             cells = find_cells(cur.rc)
             TC = target_cell_select(cur, cells)
             if not TC:  # discrete

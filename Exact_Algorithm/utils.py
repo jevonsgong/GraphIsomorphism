@@ -347,4 +347,5 @@ def graphs_equal(graph1, graph2):
 
 
 if __name__ == "__main__":
-    pass
+    pi = [0, 2, 2, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1]
+    print(find_cells(pi))

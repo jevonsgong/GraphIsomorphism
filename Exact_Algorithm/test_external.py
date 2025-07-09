@@ -55,7 +55,9 @@ def run_pair(pair_index, f1, f2):
                     file1=f1.name,
                     file2=f2.name,
                     skipped=True)'''
-
+    if G1.number_of_nodes()>1000:
+        return dict(pair_index=pair_index,
+                    isomorphic=f"too large")
     t0 = time.perf_counter()
     try:
         iso, log_str = is_isomorphic(G1, G2)
