@@ -25,14 +25,14 @@ random.seed(seed)
 torch.manual_seed(seed)
 num_data = 100
 bs = 32
-model_name = "Graphormer"
+model_name = "GIN"
 lr = 3e-4
 wd = 0
 num_layers = 2
 workers = 4
 g_list, y_list = [], []
 nxg_list = []
-PLE = True
+PLE = False
 data_name = "syn"
 dl_kwargs = dict(batch_size=bs,
                  num_workers=workers,
@@ -42,23 +42,24 @@ a_dl_kwargs = dict(batch_size=1,
 if data_name == "syn":
     for i in range(num_data):
         iso = 1.0 if i < num_data // 2 else 0.0
-        G1, G2, _ = sample_pair(iso)
+        G1, G2, label = sample_pair(iso)
         nxg_list.append((G1, G2))
-        g_list.append((create_data(G1, iso), create_data(G2, iso)))
+        g_list.append((create_data(G1), create_data(G2)))
         y_list.append(iso)
+        assert label==iso
 elif data_name == "sr":
     for i in range(num_data):
         iso = 1.0 if i < num_data // 2 else 0.0
         G1, G2, _ = sample_pair_SR(iso)
         nxg_list.append((G1, G2))
-        g_list.append((create_data(G1, iso), create_data(G2, iso)))
+        g_list.append((create_data(G1), create_data(G2)))
         y_list.append(iso)
 elif data_name == "cfi":
     for i in range(num_data):
         iso = 1.0 if i < num_data // 2 else 0.0
         G1, G2, _ = sample_pair_cfi(iso)
         nxg_list.append((G1, G2))
-        g_list.append((create_data(G1, iso), create_data(G2, iso)))
+        g_list.append((create_data(G1), create_data(G2)))
         y_list.append(iso)
 elif data_name == "3xor":
     for i in range(num_data):
@@ -72,14 +73,14 @@ elif data_name == "exp":
         iso = 1.0 if i < num_data // 2 else 0.0
         G1, G2, _ = sample_pair_exp(iso)
         nxg_list.append((G1, G2))
-        g_list.append((create_data(G1, iso), create_data(G2, iso)))
+        g_list.append((create_data(G1), create_data(G2)))
         y_list.append(iso)
 dataset = GraphPairDataset(load_samples(g_list), y_list)
 train_ds, test_ds = sklearn.model_selection.train_test_split(
     dataset, test_size=0.2, stratify=y_list, random_state=seed)
 
 Loader = CustomDataLoader if model_name != "Graphormer" else GraphormerDataLoader
-train_loader = Loader(train_ds, **dl_kwargs)
+train_loader = Loader(train_ds, shuffle=True, **dl_kwargs)
 test_loader = Loader(test_ds, shuffle=False, **dl_kwargs)
 a_train_loader = Loader(train_ds, **a_dl_kwargs)
 a_val_loader = Loader(test_ds, **a_dl_kwargs)
@@ -106,15 +107,14 @@ if not PLE:
         encoder.train()
         classifier.train()
         for (g1, g2), labels in train_loader:
-            g1, g2 = move_pair_to_device((g1, g2), device)
+            g1, g2 = g1.to(device), g2.to(device)
             labels = labels.to(device)
             h1 = encoder(g1)
             h2 = encoder(g2)
             h1 = global_add_pool(h1, g1.batch)
             h2 = global_add_pool(h2, g2.batch)
             logits = -classifier((h1 - h2).abs()).squeeze(-1)
-            probs = torch.sigmoid(logits)  # (B,) in [0,1]
-            preds = (probs > 0.5).float()  # threshold at 0.5
+            preds = (logits > 0.5).float()
             train_correct += (preds == labels).sum().item()
             train_total += labels.size(0)
 
@@ -136,7 +136,7 @@ if not PLE:
         classifier.eval()
         with torch.no_grad():
             for (g1, g2), labels in test_loader:
-                g1, g2 = move_pair_to_device((g1, g2), device)
+                g1, g2 = g1.to(device), g2.to(device)
                 labels = labels.to(device)
                 h1 = encoder(g1)
                 h2 = encoder(g2)
@@ -171,7 +171,7 @@ else:
         train_correct = train_total = 0
         base.train()
         for (g1, g2), labels in train_loader:
-            g1, g2 = move_pair_to_device((g1, g2), device)
+            g1, g2 = g1.to(device), g2.to(device)
             labels = labels.to(device)
             loss, preds = base.step(((g1, g2), labels))
             # print(loss)
@@ -192,7 +192,7 @@ else:
         base.eval()
         with torch.no_grad():
             for (g1, g2), labels in test_loader:
-                g1, g2 = move_pair_to_device((g1, g2), device)
+                g1, g2 = g1.to(device), g2.to(device)
                 labels = labels.to(device)
                 val_loss, preds = base.step(((g1, g2), labels))
 
@@ -227,7 +227,7 @@ print(f"1-WL accuracy on {num_data} pairs:", cnt / num_data)
 
 count, close_count, total = 0, 0, 0
 for (g1, g2), labels in a_train_loader:
-    g1, g2 = move_pair_to_device((g1, g2), device)
+    g1, g2 = g1.to(device), g2.to(device)
     labels = labels.to(device)
     h1 = encoder(g1)
     h2 = encoder(g2)
@@ -248,7 +248,7 @@ print("train close pairs", close_count, "/", total, "=", close_count / total)
 count, close_count, total = 0, 0, 0
 if not PLE:
     for (g1, g2), labels in a_val_loader:
-        g1, g2 = move_pair_to_device((g1, g2), device)
+        g1, g2 = g1.to(device), g2.to(device)
         labels = labels.to(device)
         h1 = encoder(g1)
         h2 = encoder(g2)
@@ -265,7 +265,7 @@ if not PLE:
 else:
     mi, ma = 1, 0
     for (g1, g2), labels in a_val_loader:
-        g1, g2 = move_pair_to_device((g1, g2), device)
+        g1, g2 = g1.to(device), g2.to(device)
         labels = labels.to(device)
         z1, z2 = base((g1, g2))
         iso = torch.allclose(z1, z2, atol=1e-4, rtol=1e-4)

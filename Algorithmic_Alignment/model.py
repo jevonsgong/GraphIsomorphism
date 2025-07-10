@@ -11,9 +11,9 @@ class MLP(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
         super(MLP, self).__init__()
         self.fc1 = nn.Linear(in_channels, hidden_channels)
-        self.bn1 = nn.BatchNorm1d(hidden_channels)  # Batch normalization after fc1
+        self.bn1 = nn.SyncBatchNorm(hidden_channels)  # Batch normalization after fc1
         self.fc2 = nn.Linear(hidden_channels, out_channels)
-        self.bn2 = nn.BatchNorm1d(out_channels)  # Batch normalization after fc2
+        self.bn2 = nn.SyncBatchNorm(out_channels)  # Batch normalization after fc2
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -33,24 +33,26 @@ class GINModel(torch.nn.Module):
         # First GINConv layer
         mlp = MLP(in_channels, hidden_channels_list, hidden_channels_list)
         self.gin_layers.append(GINConv(mlp))
-        self.bn_layers.append(nn.BatchNorm1d(hidden_channels_list))  # BatchNorm after first GINConv
+        self.bn_layers.append(nn.SyncBatchNorm(hidden_channels_list))  # BatchNorm after first GINConv
 
         # Intermediate GINConv layers
         for i in range(1, num_layers - 1):
             mlp = MLP(hidden_channels_list, hidden_channels_list, hidden_channels_list)
             self.gin_layers.append(GINConv(mlp))
-            self.bn_layers.append(nn.BatchNorm1d(hidden_channels_list))  # BatchNorm after each intermediate GINConv
+            self.bn_layers.append(nn.SyncBatchNorm(hidden_channels_list))  # BatchNorm after each intermediate GINConv
 
         # Final GINConv layer
         mlp = MLP(hidden_channels_list, hidden_channels_list, hidden_channels_list)
         self.gin_layers.append(GINConv(mlp))
+        self.bn_layers.append(nn.SyncBatchNorm(hidden_channels_list))
         #self.fc = nn.Linear(hidden_channels_list, out_channels)
 
     def forward(self, x, edge_index):
         for i in range(self.num_layers):
             x = self.gin_layers[i](x, edge_index)
+            x = self.bn_layers[i](x)
             if i < self.num_layers-1:
-                x = self.bn_layers[i](x)
+                #x = self.bn_layers[i](x)
                 x = F.relu(x)
         #x = self.fc(x)
         return x
@@ -66,13 +68,13 @@ class GatedGINModel(torch.nn.Module):
         # First GINConv layer
         mlp = MLP(in_channels, hidden_channels_list, hidden_channels_list)
         self.gin_layers.append(GINConv(mlp))
-        self.bn_layers.append(nn.BatchNorm1d(hidden_channels_list))  # BatchNorm after first GINConv
+        self.bn_layers.append(nn.SyncBatchNorm(hidden_channels_list))  # BatchNorm after first GINConv
 
         # Intermediate GINConv layers
         for i in range(1, num_layers - 1):
             mlp = MLP(hidden_channels_list, hidden_channels_list, hidden_channels_list)
             self.gin_layers.append(GINConv(mlp))
-            self.bn_layers.append(nn.BatchNorm1d(hidden_channels_list))  # BatchNorm after each intermediate GINConv
+            self.bn_layers.append(nn.SyncBatchNorm(hidden_channels_list))  # BatchNorm after each intermediate GINConv
 
         # Final GINConv layer
         mlp = MLP(hidden_channels_list, hidden_channels_list, hidden_channels_list)

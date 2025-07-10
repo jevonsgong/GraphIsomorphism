@@ -72,6 +72,7 @@ class Siamese(nn.Module):
                  hidden: int = 256,
                  lr: float = 3e-4,
                  weight_decay: float = 4e-5,
+                 learn_classifier: bool = False,
                  ):
         super().__init__()
 
@@ -85,11 +86,13 @@ class Siamese(nn.Module):
             self.linear.append(torch.nn.Linear(self.emb_dim*2, self.emb_dim*2))
             self.batch_norms.append(torch.nn.BatchNorm1d(self.emb_dim*2))"""
 
-        self.classifier = nn.Sequential(
-            nn.Linear(self.emb_dim, hidden//2),
-            nn.ReLU(),
-            nn.Linear(hidden//2, 1)
-        )
+        self.learn_classifier = learn_classifier
+        if self.learn_classifier:
+            self.classifier = nn.Sequential(
+                #nn.Linear(self.emb_dim, hidden),
+                #nn.ReLU(),
+                nn.Linear(hidden, 1)
+            )
 
         #self.loss_fn = nn.BCEWithLogitsLoss()
         self.lr = lr
@@ -119,31 +122,13 @@ class Siamese(nn.Module):
             h1 = self.readout(h1, g1.batch)
             h2 = self.readout(h2, g2.batch)
 
-        """for layer in range(self.num_layer):
-            h1 = self.linear[layer](h1)
-            h1 = self.batch_norms[layer](h1)
-
-            if layer != self.num_layer - 1:
-                h1 = F.relu(h1)
-
-        # h1 = h1.sum(dim=1)
-
-        for layer in range(self.num_layer):
-            h2 = self.linear[layer](h2)
-            h2 = self.batch_norms[layer](h2)
-
-            if layer != self.num_layer - 1:
-                h2 = F.relu(h2)"""
-
-        #print("Encode", torch.allclose(h1.sort(0).values, h2.sort(0).values))
-        # h2 = h2.sum(dim=1)
-        # h1, h2 = h1.unsqueeze(-1), h2.unsqueeze(-1)
-
-        #h1, h2 = h1.squeeze(0), h2.squeeze(0)
         z = (h1-h2).abs()
-        logits = -self.classifier(z).squeeze(-1)
-        #if logits.shape[0] != 1:
-        #    logits = logits.squeeze()
+        #print(z.sum(dim=-1))
+        if self.learn_classifier:
+            logits = torch.sigmoid(-self.classifier(z).squeeze(-1))
+        else:
+            logits = torch.exp(-z.sum(dim=-1).squeeze(-1))
+
         return logits
 
     # ----- training / validation ----------------------------------------
@@ -173,7 +158,7 @@ class SiamesePLE(nn.Module):
         proj_layers: int = 2,
         r: float = 0.5,
         alpha: float = 0.5,
-        b: float = -0.7,
+        b: float = -0.9,
         b_theta: float = 0.005,
         lr: float = 3e-4,
         wd: float = 4e-5
@@ -221,9 +206,9 @@ class SiamesePLE(nn.Module):
         h = self.project(h)
         return F.normalize(h, dim=-1)      # unit-norm vector
 
-    def forward(self, graphs_pair):
+    def forward(self, batch):
         """Return (z_q1, z_q2, z_k1, z_k2)"""
-        g1, g2 = graphs_pair
+        (g1, g2), same_label = batch
         if self.model == "GCN-Pooling":
             z1 = self._encode_GCN_Pooling(g1, self.encoder)
             z2 = self._encode_GCN_Pooling(g2, self.encoder)
@@ -235,7 +220,13 @@ class SiamesePLE(nn.Module):
             z1 = self._encode(g1, self.encoder)
             z2 = self._encode(g2, self.encoder)
 
-        return z1, z2
+        inner = (z1 * z2).sum(dim=-1)
+        norm1 = z1.norm(dim=-1)
+        norm2 = z2.norm(dim=-1)
+        loss = self.criterion(z1, z2, same_label.bool())
+
+        preds = (inner - norm1 * norm2 * self.criterion.b_theta + self.criterion.b > 0).float()
+        return loss, preds
 
     # -------------------------------------------------------------------------
     def step(self, batch):
