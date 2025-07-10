@@ -30,14 +30,14 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 import time
 
-from utils import EarlyStopper, ddp_setup, cleanup, pad_sparse_matrix, average_gradients
+from utils import EarlyStopper, cleanup, pad_sparse_matrix, average_gradients
 from Dataset import GraphPairDataset, CustomDataLoader, load_samples, create_data, ReadingGraphPairs
 from Siamese import Siamese, SiamesePLE
+from model import SimPLELoss
 from tqdm import tqdm
 import socket
 
 def run_epoch(model, loader, rank, optimizer=None, PLE=False):
-    loss_fn = nn.BCELoss()
     train = optimizer is not None
     if train:
         model.train()
@@ -47,20 +47,24 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
     world_size = dist.get_world_size()
     running_loss, all_logits, all_labels, preds = 0.0, [], [], []
     if not PLE:
+        loss_fn = nn.BCELoss()
         for (g1, g2), labels in loader:
             g1, g2, labels = (x.to(rank) for x in (g1, g2, labels))
             if train:
-                model.eval()
                 logits = model((g1, g2))
-                model.train()
             else:
-                logits = model((g1, g2))
+                with torch.no_grad():
+                    logits = model((g1, g2))
             loss = loss_fn(logits, labels)
             if train:
                 model.zero_grad()
                 loss.backward()
                 # average_gradients(model)
                 optimizer.step()
+                with torch.no_grad():
+                    model.eval()
+                    logits = model((g1, g2))
+                    model.train()
 
             batch_loss = loss.detach()
             dist.all_reduce(batch_loss, op=dist.ReduceOp.SUM)
@@ -70,9 +74,16 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
         logits = torch.cat(all_logits)
         preds = (logits > 0.5)
     else:
+        loss_fn = SimPLELoss(b=-0.99,b_theta=0.005)
         for (g1, g2), labels in loader:
             g1, g2, labels = (x.to(rank) for x in (g1, g2, labels))
-            loss, pred = model(((g1, g2), labels))
+            if train:
+                z1, z2 = model(((g1, g2), labels))
+            else:
+                with torch.no_grad():
+                    z1, z2 = model(((g1, g2), labels))
+
+            loss = loss_fn(z1, z2, labels.bool())
 
             if train:
                 model.zero_grad()
@@ -80,8 +91,14 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
                 # average_gradients(model)
                 optimizer.step()
                 with torch.no_grad():
-                    _, pred = model((g1, g2))
+                    model.eval()
+                    z1, z2 = model(((g1, g2), labels))
+                    model.train()
 
+            inner = (z1 * z2).sum(dim=-1)
+            norm1 = z1.norm(dim=-1)
+            norm2 = z2.norm(dim=-1)
+            pred = (inner - norm1 * norm2 * loss_fn.b_theta + loss_fn.b > 0).float()
             batch_loss = loss.detach()
             dist.all_reduce(batch_loss, op=dist.ReduceOp.SUM)
             running_loss += batch_loss / world_size
@@ -116,7 +133,7 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
 
 
 def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_name="syn", epochs=15, bs=32,
-                      num_layers=2, workers=4, seed=42, PLE=False, rank=0, world_size=4):
+                      num_layers=1, workers=4, seed=42, PLE=False, rank=0, world_size=4, stop_mode="acc"):
     train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True)
     test_sampler = DistributedSampler(test_ds, shuffle=False)
 
@@ -137,8 +154,6 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
     random.seed(seed)
     torch.manual_seed(seed)
 
-    # ddp_setup(rank, world_size)
-
     # -------- model --------
     if not PLE:
         base = Siamese(model_name, lr=lr, weight_decay=wd, num_layers=num_layers, learn_classifier=True)
@@ -157,17 +172,14 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
     scheduler = ReduceLROnPlateau(optimizer, "min", factor=0.5, patience=2)
 
     history = defaultdict(list)
-    true_epoch = None
-    patience, bad_epochs, wait = 7, 3, 0
-    stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='min')
-    last_train_loss = None
+
     for epoch in tqdm(range(1, epochs + 1), desc=f"cfg={lr, wd}"):
         # print(f"rank {rank} reach {epoch}")
         train_sampler.set_epoch(epoch)
 
-        te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE)
-        tr_loss, tr_acc, tr_f1 = run_epoch(model, train_loader, rank, optimizer, PLE=PLE)
         #te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE)
+        tr_loss, tr_acc, tr_f1 = run_epoch(model, train_loader, rank, optimizer, PLE=PLE)
+        te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE)
 
         scheduler.step(tr_loss)
         history["train_loss"].append(tr_loss)
@@ -181,12 +193,20 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
                 log = f"[{epoch:02d}/{epochs}] | train loss {tr_loss:.3f} | acc {tr_acc:.3f} | f1 {tr_f1:.3f} | val loss {te_loss:.3f} | acc {te_acc:.3f} | f1 {te_f1:.3f}\n"
                 f.write(log)
 
-        if stopper.step(tr_loss, te_loss):
-            print(f"Early stop at epoch {epoch}")
-            # if stopper.wait_val > patience:
-            # print("Val not improved")
-            # else:
-            # print("Train loss increased")
+        patience, bad_epochs, wait = 7, 3, 0
+        if stop_mode == "acc":
+            stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='max')
+            if stopper.step(tr_acc, te_acc):
+                print(f"No learning stop at epoch {epoch}")
+                break
+        elif stop_mode == "loss":
+            stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='min')
+            if stopper.step(tr_loss, te_loss):
+                print(f"No learning stop at epoch {epoch}")
+                break
+
+        if tr_acc >= 0.97 and te_acc > 0.97:
+            print(f"Finished learning stop at epoch {epoch}")
             break
 
     # print(f"rank {rank} reach barrier")

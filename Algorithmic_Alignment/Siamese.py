@@ -155,11 +155,7 @@ class SiamesePLE(nn.Module):
         self,
         model: str,
         emb_dim: int = 256,
-        proj_layers: int = 2,
-        r: float = 0.5,
-        alpha: float = 0.5,
-        b: float = -0.9,
-        b_theta: float = 0.005,
+        proj_layers: int = 1,
         lr: float = 3e-4,
         wd: float = 4e-5
     ) -> None:
@@ -179,7 +175,7 @@ class SiamesePLE(nn.Module):
         self.project = nn.Sequential(*mlp)
         self.readout = Set2Set(emb_dim, processing_steps=3)
 
-        self.criterion = SimPLELoss(r=r, alpha=alpha, b=b, b_theta=b_theta)
+        #self.criterion = SimPLELoss(r=r, alpha=alpha, b=b, b_theta=b_theta)
         self.lr = lr
         self.wd = wd
 
@@ -220,26 +216,7 @@ class SiamesePLE(nn.Module):
             z1 = self._encode(g1, self.encoder)
             z2 = self._encode(g2, self.encoder)
 
-        inner = (z1 * z2).sum(dim=-1)
-        norm1 = z1.norm(dim=-1)
-        norm2 = z2.norm(dim=-1)
-        loss = self.criterion(z1, z2, same_label.bool())
-
-        preds = (inner - norm1 * norm2 * self.criterion.b_theta + self.criterion.b > 0).float()
-        return loss, preds
-
-    # -------------------------------------------------------------------------
-    def step(self, batch):
-        """One training / validation step.  Returns loss and preds."""
-        (g1, g2), same_label = batch  # `same_label` *(B,)∈{0,1}*
-        z1, z2 = self((g1, g2))
-        inner = (z1 * z2).sum(dim=-1)
-        norm1 = z1.norm(dim=-1)
-        norm2 = z2.norm(dim=-1)
-        loss = self.criterion(z1, z2, same_label.bool())
-
-        preds = (inner - norm1*norm2*self.criterion.b_theta + self.criterion.b > 0).float()
-        return loss, preds
+        return z1, z2
 
     def find_boundary(self, batch):
         with torch.no_grad():
@@ -256,8 +233,8 @@ class SiamesePLE(nn.Module):
                 else:
                     return 1, s[0]
         return iso_minimum, non_iso_maximum
-        # ------------------------------------------------------------------------
+
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.encoder.parameters(), lr=self.lr, weight_decay=self.wd, betas=(0.9,0.99))
+        return torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.wd, betas=(0.9,0.99))
 
 

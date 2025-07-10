@@ -9,7 +9,7 @@ class EarlyStopper:
     • val metric doesn't improve for `patience` epochs, OR
     • train metric increases for `bad_epochs` consecutive epochs.
     """
-    def __init__(self, patience=3, bad_epochs=2, mode='min', min_delta=1e-4):
+    def __init__(self, patience=3, bad_epochs=2, mode='min', min_delta=1e-3):
         self.patience    = patience
         self.bad_epochs  = bad_epochs
         self.mode        = mode
@@ -20,8 +20,9 @@ class EarlyStopper:
         self.bad_counter = 0
 
     def improved(self, current, best):
-        return current < best - self.min_delta
-
+        if self.mode == "min":
+            return current < best - self.min_delta
+        return current > best + self.min_delta
 
     def step(self, train_metric, val_metric):
         # ---- validation part -----------------------------------------------
@@ -40,19 +41,6 @@ class EarlyStopper:
 
         # ---- stop? ----------------------------------------------------------
         return (self.wait_val >= self.patience) or (self.bad_counter >= self.bad_epochs)
-
-def ddp_setup(rank: int, world_size: int):
-    """Initialise default process group and bind CUDA device."""
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
-    s = socket.socket()
-    s.bind(('127.0.0.1', 0))
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = str(
-        s.getsockname()[1])
-    s.close()
-
-
 
 def cleanup():
     dist.destroy_process_group()

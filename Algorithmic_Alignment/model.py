@@ -190,7 +190,7 @@ class BFS_Refine(nn.Module):
 
 
 class SimPLELoss(nn.Module):
-    def __init__(self, r: float = 3.0, alpha: float = 0.5, b: float = 0.0, b_theta: float = 0, eps: float = 1e-8):
+    def __init__(self, r: float = 0.5, alpha: float = 0.5, b: float = -0.99, b_theta: float = 0.003, eps: float = 1e-8):
         super().__init__()
         self.r = r
         self.alpha = alpha
