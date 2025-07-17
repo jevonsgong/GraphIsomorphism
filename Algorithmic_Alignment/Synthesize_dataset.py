@@ -6,6 +6,7 @@ from Dataset import create_data
 import torch
 
 Pair = Tuple[nx.Graph, nx.Graph, bool]
+max_nodes = 256
 
 def make_isomorphic_copy(G: nx.Graph) -> nx.Graph:
     """Return a randomly relabeled copy of G (guaranteed isomorphic)."""
@@ -175,10 +176,15 @@ def sample_pair_xor(iso:bool=False):
     • If make_iso=True we simply relabel G1 to obtain G2.
     • Otherwise we flip the parity bit of *one* clause → produces non-iso pair.
     """
-    n_vars: int = random.randint(10,100)
-    n_clauses: int = random.randint(15,150)
+    n_vars: int = random.randint(10,80)
+    n_clauses: int = random.randint(15,120)
     phi = random_3xor_formula(n_vars, n_clauses)
     G1  = three_xor_to_graph(phi)
+    while G1.number_of_nodes() > max_nodes:
+        n_vars: int = random.randint(10, 80)
+        n_clauses: int = random.randint(15, 120)
+        phi = random_3xor_formula(n_vars, n_clauses)
+        G1 = three_xor_to_graph(phi)
     if iso:
         perm = {v: f'p{idx}' for idx,v in enumerate(G1.nodes)}
         G2   = nx.relabel_nodes(G1, perm)
@@ -246,8 +252,10 @@ def sample_pair_exp(
     return G1, G2, label
 
 if __name__ == "__main__":
-    num_data = 12
-    for data_name in ["syn","sr","cfi","3xor","exp"]:
+    num_data = 512
+    #data_list = ["syn","sr","cfi","3xor","exp"]
+    data_list = ["3xor"]
+    for data_name in data_list:
         g_list, y_list = [], []
         if data_name == "syn":
             for i in range(num_data):
@@ -257,8 +265,8 @@ if __name__ == "__main__":
                 y_list.append(int(iso))
             for i, (g1, g2) in enumerate(g_list):
                 n = g1.x.shape[0]
-                torch.save(g1, f"{data_name}/{data_name}_graphs_{i+500}_1_{n}_{y_list[i]}.pt")
-                torch.save(g2, f"{data_name}/{data_name}_graphs_{i+500}_2_{n}_{y_list[i]}.pt")
+                torch.save(g1, f"{data_name}/{data_name}_graphs_{i}_1_{n}_{y_list[i]}.pt")
+                torch.save(g2, f"{data_name}/{data_name}_graphs_{i}_2_{n}_{y_list[i]}.pt")
             print(f"{data_name} stored")
         elif data_name == "sr":
             for i in range(num_data):
@@ -268,8 +276,8 @@ if __name__ == "__main__":
                 y_list.append(int(iso))
             for i, (g1, g2) in enumerate(g_list):
                 n = g1.x.shape[0]
-                torch.save(g1, f"{data_name}/{data_name}_graphs_{i+500}_1_{n}_{y_list[i]}.pt")
-                torch.save(g2, f"{data_name}/{data_name}_graphs_{i+500}_2_{n}_{y_list[i]}.pt")
+                torch.save(g1, f"{data_name}/{data_name}_graphs_{i}_1_{n}_{y_list[i]}.pt")
+                torch.save(g2, f"{data_name}/{data_name}_graphs_{i}_2_{n}_{y_list[i]}.pt")
             print(f"{data_name} stored")
         elif data_name == "cfi":
             for i in range(num_data):
@@ -279,8 +287,8 @@ if __name__ == "__main__":
                 y_list.append(int(iso))
             for i, (g1, g2) in enumerate(g_list):
                 n = g1.x.shape[0]
-                torch.save(g1, f"{data_name}/{data_name}_graphs_{i+500}_1_{n}_{y_list[i]}.pt")
-                torch.save(g2, f"{data_name}/{data_name}_graphs_{i+500}_2_{n}_{y_list[i]}.pt")
+                torch.save(g1, f"{data_name}/{data_name}_graphs_{i}_1_{n}_{y_list[i]}.pt")
+                torch.save(g2, f"{data_name}/{data_name}_graphs_{i}_2_{n}_{y_list[i]}.pt")
             print(f"{data_name} stored")
         elif data_name == "3xor":
             for i in range(num_data):
@@ -290,8 +298,8 @@ if __name__ == "__main__":
                 y_list.append(int(iso))
             for i, (g1, g2) in enumerate(g_list):
                 n = g1.x.shape[0]
-                torch.save(g1, f"{data_name}/{data_name}_graphs_{i+500}_1_{n}_{y_list[i]}.pt")
-                torch.save(g2, f"{data_name}/{data_name}_graphs_{i+500}_2_{n}_{y_list[i]}.pt")
+                torch.save(g1, f"{data_name}/{data_name}_graphs_{i}_1_{n}_{y_list[i]}.pt")
+                torch.save(g2, f"{data_name}/{data_name}_graphs_{i}_2_{n}_{y_list[i]}.pt")
             print(f"{data_name} stored")
         elif data_name == "exp":
             for i in range(num_data):
@@ -301,6 +309,6 @@ if __name__ == "__main__":
                 y_list.append(int(iso))
             for i, (g1, g2) in enumerate(g_list):
                 n = g1.x.shape[0]
-                torch.save(g1, f"{data_name}/{data_name}_graphs_{i+500}_1_{n}_{y_list[i]}.pt")
-                torch.save(g2, f"{data_name}/{data_name}_graphs_{i+500}_2_{n}_{y_list[i]}.pt")
+                torch.save(g1, f"{data_name}/{data_name}_graphs_{i}_1_{n}_{y_list[i]}.pt")
+                torch.save(g2, f"{data_name}/{data_name}_graphs_{i}_2_{n}_{y_list[i]}.pt")
             print(f"{data_name} stored")

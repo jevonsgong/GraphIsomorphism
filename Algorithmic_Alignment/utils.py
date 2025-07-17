@@ -38,7 +38,6 @@ class EarlyStopper:
         else:
             self.bad_counter = 0
         self.prev_train = train_metric
-
         # ---- stop? ----------------------------------------------------------
         return (self.wait_val >= self.patience) or (self.bad_counter >= self.bad_epochs)
 

@@ -1,17 +1,20 @@
 import os, random, argparse, json, math, pathlib, sys
-from torch_geometric.utils import to_dense_batch
+
+import networkx as nx
+from torch_geometric.utils import to_dense_batch, to_networkx
 from torch.optim import AdamW
 
 repo_root = pathlib.Path(__file__).resolve().parents[1]
 
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
-PATH1 = "../Graphormer"
-PATH3 = "../Graphormer/fairseq"
+PATH1 = "./Graphormer"
+PATH3 = "./Graphormer/fairseq"
 sys.path.append(PATH1)
 sys.path.append(PATH3)
+#print(sys.path)
 from Siamese import Siamese, SiamesePLE
-from Dataset import GraphPairDataset, CustomDataLoader, load_samples, create_data, GraphormerDataLoader
+from Dataset import GraphPairDataset, CustomDataLoader, load_samples, create_data, GraphormerDataLoader, ReadingGraphPairs
 from Synthesize_dataset import sample_pair_cfi, sample_pair, sample_pair_SR, sample_pair_xor, sample_pair_exp
 import sklearn.model_selection
 from torch.utils.data import DataLoader, DistributedSampler
@@ -24,67 +27,46 @@ seed = random.randint(1, 100)
 random.seed(seed)
 torch.manual_seed(seed)
 num_data = 100
-bs = 32
-model_name = "GIN"
+bs = 16
+model_name = "GCN-RNI"
 lr = 3e-4
 wd = 0
 num_layers = 2
-workers = 4
+workers = 0
 g_list, y_list = [], []
 nxg_list = []
 PLE = False
-data_name = "syn"
+data_name = "sr"
+
+project_root = pathlib.Path(__file__).resolve().parents[1]  # …/GraphIsomorphism
+dataset = ReadingGraphPairs(root=project_root, data_name=data_name)
+for i in range(len(dataset)):
+    (g1, g2), label = dataset[i]
+    g_list.append((g1, g2))
+    nxg_list.append((to_networkx(g1),to_networkx(g2)))
+    y_list.append(label)
+dataset = GraphPairDataset(load_samples(g_list), y_list)
+
+train_ds, test_ds = sklearn.model_selection.train_test_split(
+    dataset, test_size=0.2, stratify=y_list, random_state=seed)
+
 dl_kwargs = dict(batch_size=bs,
                  num_workers=workers,
                  pin_memory=True)
 a_dl_kwargs = dict(batch_size=1,
                    pin_memory=True)
-if data_name == "syn":
-    for i in range(num_data):
-        iso = 1.0 if i < num_data // 2 else 0.0
-        G1, G2, label = sample_pair(iso)
-        nxg_list.append((G1, G2))
-        g_list.append((create_data(G1), create_data(G2)))
-        y_list.append(iso)
-        assert label==iso
-elif data_name == "sr":
-    for i in range(num_data):
-        iso = 1.0 if i < num_data // 2 else 0.0
-        G1, G2, _ = sample_pair_SR(iso)
-        nxg_list.append((G1, G2))
-        g_list.append((create_data(G1), create_data(G2)))
-        y_list.append(iso)
-elif data_name == "cfi":
-    for i in range(num_data):
-        iso = 1.0 if i < num_data // 2 else 0.0
-        G1, G2, _ = sample_pair_cfi(iso)
-        nxg_list.append((G1, G2))
-        g_list.append((create_data(G1), create_data(G2)))
-        y_list.append(iso)
-elif data_name == "3xor":
-    for i in range(num_data):
-        iso = 1.0 if i < num_data // 2 else 0.0
-        G1, G2, _ = sample_pair_xor(iso)
-        nxg_list.append((G1, G2))
-        g_list.append((create_data(G1), create_data(G2)))
-        y_list.append(iso)
-elif data_name == "exp":
-    for i in range(num_data):
-        iso = 1.0 if i < num_data // 2 else 0.0
-        G1, G2, _ = sample_pair_exp(iso)
-        nxg_list.append((G1, G2))
-        g_list.append((create_data(G1), create_data(G2)))
-        y_list.append(iso)
-dataset = GraphPairDataset(load_samples(g_list), y_list)
-train_ds, test_ds = sklearn.model_selection.train_test_split(
-    dataset, test_size=0.2, stratify=y_list, random_state=seed)
-
 Loader = CustomDataLoader if model_name != "Graphormer" else GraphormerDataLoader
-train_loader = Loader(train_ds, shuffle=True, **dl_kwargs)
-test_loader = Loader(test_ds, shuffle=False, **dl_kwargs)
+train_loader = Loader(train_ds, shuffle=True, drop_last=True, **dl_kwargs)
+test_loader = Loader(test_ds, shuffle=False, drop_last=True, **dl_kwargs)
 a_train_loader = Loader(train_ds, **a_dl_kwargs)
 a_val_loader = Loader(test_ds, **a_dl_kwargs)
 
+for (g1, g2), label in zip(nxg_list, y_list):
+    res = nx.is_isomorphic(g1,g2)
+    if res != label:
+        print(res)
+        print(label)
+print("All done")
 device = torch.device(f"cuda:0") if torch.cuda.is_available() else "cpu"
 loss_fn = nn.BCEWithLogitsLoss()
 if not PLE:
@@ -108,16 +90,24 @@ if not PLE:
         classifier.train()
         for (g1, g2), labels in train_loader:
             g1, g2 = g1.to(device), g2.to(device)
+            #print(g1.in_degree)
             labels = labels.to(device)
-            h1 = encoder(g1)
-            h2 = encoder(g2)
-            h1 = global_add_pool(h1, g1.batch)
-            h2 = global_add_pool(h2, g2.batch)
+            if model_name == "Graphormer":
+                h1 = encoder(g1)
+                h2 = encoder(g2)
+
+            else:
+                h1 = encoder(g1)
+                h2 = encoder(g2)
+                h1 = global_add_pool(h1, g1.batch)
+                h2 = global_add_pool(h2, g2.batch)
+
             logits = -classifier((h1 - h2).abs()).squeeze(-1)
             preds = (logits > 0.5).float()
             train_correct += (preds == labels).sum().item()
             train_total += labels.size(0)
-
+            #print(preds)
+            #print(labels)
             loss = loss_fn(logits, labels)
             # print(loss)
             # print(logits)
@@ -138,10 +128,15 @@ if not PLE:
             for (g1, g2), labels in test_loader:
                 g1, g2 = g1.to(device), g2.to(device)
                 labels = labels.to(device)
-                h1 = encoder(g1)
-                h2 = encoder(g2)
-                h1 = global_add_pool(h1, g1.batch)
-                h2 = global_add_pool(h2, g2.batch)
+                if model_name == "Graphormer":
+                    h1 = encoder(g1)
+                    h2 = encoder(g2)
+
+                else:
+                    h1 = encoder(g1)
+                    h2 = encoder(g2)
+                    h1 = global_add_pool(h1, g1.batch)
+                    h2 = global_add_pool(h2, g2.batch)
                 logits = -classifier((h1 - h2).abs()).squeeze(-1)
                 probs = torch.sigmoid(logits)  # (B,) in [0,1]
                 preds = (probs > 0.5).float()  # threshold at 0.5
@@ -226,14 +221,25 @@ for i in range(num_data):
 print(f"1-WL accuracy on {num_data} pairs:", cnt / num_data)
 
 count, close_count, total = 0, 0, 0
+last_h = None
 for (g1, g2), labels in a_train_loader:
     g1, g2 = g1.to(device), g2.to(device)
     labels = labels.to(device)
-    h1 = encoder(g1)
-    h2 = encoder(g2)
-    g1_emb = global_add_pool(h1, g1.batch)  # (1, hidden)
-    g2_emb = global_add_pool(h2, g2.batch)
-    iso = torch.allclose(g1_emb, g2_emb, atol=1e-4, rtol=1e-4)
+    if model_name == "Graphormer":
+        h1 = encoder(g1)
+        h2 = encoder(g2)
+
+    else:
+        h1 = encoder(g1)
+        h2 = encoder(g2)
+        h1 = global_add_pool(h1, g1.batch)
+        h2 = global_add_pool(h2, g2.batch)
+    if last_h is not None:
+        print(torch.allclose(h1, last_h, atol=1e-4, rtol=1e-4))
+    last_h = h1
+    print(h1[:,:10])
+
+    iso = torch.allclose(h1, h2, atol=1e-4, rtol=1e-4)
     if labels.item() == 1 and iso:
         count += 1
     if labels.item() == 0 and not iso:
@@ -250,11 +256,16 @@ if not PLE:
     for (g1, g2), labels in a_val_loader:
         g1, g2 = g1.to(device), g2.to(device)
         labels = labels.to(device)
-        h1 = encoder(g1)
-        h2 = encoder(g2)
-        g1_emb = global_add_pool(h1, g1.batch)  # (1, hidden)
-        g2_emb = global_add_pool(h2, g2.batch)
-        iso = torch.allclose(g1_emb, g2_emb, atol=1e-4, rtol=1e-4)
+        if model_name == "Graphormer":
+            h1 = encoder(g1)
+            h2 = encoder(g2)
+
+        else:
+            h1 = encoder(g1)
+            h2 = encoder(g2)
+            h1 = global_add_pool(h1, g1.batch)
+            h2 = global_add_pool(h2, g2.batch)
+        iso = torch.allclose(h1, h2, atol=1e-4, rtol=1e-4)
         if labels.item() == 1 and iso:
             count += 1
         if labels.item() == 0 and not iso:

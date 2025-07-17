@@ -12,15 +12,9 @@ from pathlib import Path
 import re
 import os
 
-
+max_nodes =256
 class GraphPairDataset(Dataset):
     def __init__(self, graph_pairs, labels):
-        """
-        graph_pairs: List of tuples, where each tuple contains
-                     (graph_1_data, graph_2_data, graph_1_list_of_matrix, graph_2_list_of_matrix),
-                     and all elements are NumPy arrays.
-        labels: List of binary labels corresponding to each graph pair.
-        """
         self.graph_pairs = graph_pairs
         self.labels = labels
 
@@ -29,17 +23,11 @@ class GraphPairDataset(Dataset):
         return len(self.graph_pairs)
 
     def __getitem__(self, idx):
-        graph_1_data, graph_2_data = self.graph_pairs[idx]
+        graph_1_data, graph_2_data = self.graph_pairs[idx][0], self.graph_pairs[idx][1]
+        Adj1, Adj2 = self.graph_pairs[idx][2], self.graph_pairs[idx][3]
         label = self.labels[idx]
 
-        #graph_1_nodes_tensor = torch.tensor(graph_1_node_idx).float()
-        #graph_2_nodes_tensor = torch.tensor(graph_2_node_idx).float()
-
-        #graph_1_matrix_tensor = [sparse_to_torch(matrix) for matrix in graph_1_matrix]
-        #graph_2_matrix_tensor = [sparse_to_torch(matrix) for matrix in graph_2_matrix]
-
-        # print(graph_1_data.x)
-        return (graph_1_data, graph_2_data), torch.tensor(label, dtype=torch.float)
+        return (graph_1_data, graph_2_data, Adj1, Adj2), torch.tensor(label, dtype=torch.float)
 
 
 class ReadingGraphPairs(Dataset):
@@ -137,18 +125,12 @@ def create_data(G):
     # data.y = 1
     return data
 
-def pad_square(t, target_n, pad_value):
-    # t: (C, n, n) or (n, n)
-    pad = target_n - t.size(-1)
-    if pad == 0:
-        return t
-    if t.dim() == 3:                           # (C, n, n)
-        return F.pad(t, (0, pad, 0, pad), value=pad_value)
-    else:                                      # (n, n)
-        return F.pad(t, (0, pad, 0, pad), value=pad_value)
 
 def load_samples(dataset: list):
     samples_list = []
+    #Adjs = []
+    #max_node = max(data[0].x.shape[0] for data in dataset)
+    max_node = max_nodes
     for graph_data in dataset:
         num_nodes_1 = graph_data[0].x.shape[0]
         num_nodes_2 = graph_data[1].x.shape[0]
@@ -157,14 +139,20 @@ def load_samples(dataset: list):
 
         adjacency_matrix_1 = to_dense_adj(edge_index_1, max_num_nodes=num_nodes_1)[0]  # Shape (num_nodes, num_nodes)
         adjacency_matrix_2 = to_dense_adj(edge_index_2, max_num_nodes=num_nodes_2)[0]  # Shape (num_nodes, num_nodes)
+        sp_1 = torch.ones((1, max_node, max_node))*99
+        sp_2 = torch.ones((1, max_node, max_node))*99
         spatial_pos_1 = torch.where(adjacency_matrix_1 > 0, adjacency_matrix_1,
-                                    torch.tensor(float('inf')))  # Replace 0s with infinity
-        spatial_pos_1.fill_diagonal_(0)  # Self-loops have 0 distance
+                                    torch.tensor(99))  # Replace 0s with infinity
         spatial_pos_2 = torch.where(adjacency_matrix_2 > 0, adjacency_matrix_2,
-                                    torch.tensor(float('inf')))  # Replace 0s with infinity
-        spatial_pos_2.fill_diagonal_(0)  # Self-loops have 0 distance
-        graph_data[0].__setattr__('spatial_pos', spatial_pos_1)
-        graph_data[1].__setattr__('spatial_pos', spatial_pos_2)
+                                    torch.tensor(99))  # Replace 0s with infinity
+
+        sp_1[:, :spatial_pos_1.shape[0], :spatial_pos_1.shape[0]] = spatial_pos_1.unsqueeze(0)
+        sp_2[:, :spatial_pos_2.shape[0], :spatial_pos_2.shape[0]] = spatial_pos_2.unsqueeze(0)
+        sp_1[0].fill_diagonal_(0)  # Self-loops have 0 distance
+        sp_2[0].fill_diagonal_(0)  # Self-loops have 0 distance
+        sp_1, sp_2 = sp_1.int(), sp_2.int()
+        graph_data[0].__setattr__('spatial_pos', sp_1)
+        graph_data[1].__setattr__('spatial_pos', sp_2)
 
         num_edges_1 = edge_index_1.size(1)
         num_edges_2 = edge_index_2.size(1)
@@ -176,23 +164,21 @@ def load_samples(dataset: list):
         graph_data[0].__setattr__('edge_type', torch.randint(0, num_edge_types, (num_edges_1,)))
         graph_data[1].__setattr__('edge_type', torch.randint(0, num_edge_types, (num_edges_2,)))
 
-        graph_data[0].__setattr__('attn_edge_type', torch.zeros((1, num_nodes_1, num_nodes_1)))
-        graph_data[1].__setattr__('attn_edge_type', torch.zeros((1, num_nodes_2, num_nodes_2)))
+        graph_data[0].__setattr__('attn_edge_type', torch.zeros((1, max_node, max_node, num_edge_types),dtype=torch.int))
+        graph_data[1].__setattr__('attn_edge_type', torch.zeros((1, max_node, max_node, num_edge_types),dtype=torch.int))
 
-        # print(num_nodes)
-        # sys.exit()
-        graph_data[0].__setattr__('attn_bias', torch.zeros((1, num_nodes_1 + 1, num_nodes_1 + 1)))
-        graph_data[1].__setattr__('attn_bias', torch.zeros((1, num_nodes_2 + 1, num_nodes_2 + 1)))
+        graph_data[0].__setattr__('attn_bias', torch.zeros((1, max_node + 1, max_node + 1)))
+        graph_data[1].__setattr__('attn_bias', torch.zeros((1, max_node + 1, max_node + 1)))
 
-        graph_data[0].__setattr__('in_degree', graph_data[0].x.clone())
-        graph_data[1].__setattr__('out_degree', graph_data[0].x.clone())
+        graph_data[0].__setattr__('in_degree', torch.argmax(graph_data[0].x, dim=-1).int())
+        graph_data[0].__setattr__('out_degree', torch.argmax(graph_data[0].x, dim=-1).int())
 
-        graph_data[0].__setattr__('in_degree', graph_data[1].x.clone())
-        graph_data[1].__setattr__('out_degree', graph_data[1].x.clone())
+        graph_data[1].__setattr__('in_degree', torch.argmax(graph_data[1].x, dim=-1).int())
+        graph_data[1].__setattr__('out_degree', torch.argmax(graph_data[1].x, dim=-1).int())
         # print(graph_data[0].in_degrees)
 
         sample = (
-            graph_data[0], graph_data[1],
+            graph_data[0], graph_data[1], adjacency_matrix_1.to(torch.float64), adjacency_matrix_2.to(torch.float64)
         )
         samples_list.append(sample)
 
@@ -218,7 +204,7 @@ class CustomDataLoader(DataLoader):
         graph_1_data_list = []
         graph_2_data_list = []
         labels = []
-        for (g1, g2), label in batch:
+        for (g1, g2, _, _), label in batch:
             graph_1_data_list.append(g1)
             graph_2_data_list.append(g2)
             if isinstance(label, float):
@@ -226,28 +212,38 @@ class CustomDataLoader(DataLoader):
             else:
                 labels.append(label)
         #inspect_batch(graph_1_data_list)
-        graph_1_data_batch = Batch.from_data_list(graph_1_data_list,exclude_keys=['attn_bias', 'attn_edge_type', 'spatial_pos'])
-        graph_2_data_batch = Batch.from_data_list(graph_2_data_list,exclude_keys=['attn_bias', 'attn_edge_type', 'spatial_pos'])
+        graph_1_data_batch = Batch.from_data_list(graph_1_data_list)
+        graph_2_data_batch = Batch.from_data_list(graph_2_data_list)
 
-        attn_bias = []
-        edge_type = []
-        spatial_pos = []
-        PAD_VAL_BIAS = 0
-        PAD_VAL_EDGETY = 0
-        PAD_VAL_SPOS = torch.inf
-        for data_list, batch in zip([graph_1_data_list,graph_2_data_list],[graph_1_data_batch,graph_2_data_batch]):
-            max_n = max(d.num_nodes for d in data_list)
-            for d in data_list:
-                attn_bias.append(pad_square(d.attn_bias, max_n, PAD_VAL_BIAS))
-                edge_type.append(pad_square(d.attn_edge_type, max_n, PAD_VAL_EDGETY))
-                spatial_pos.append(pad_square(d.spatial_pos, max_n, PAD_VAL_SPOS))
-
-            batch.attn_bias = torch.stack(attn_bias)  # (B, 1, N, N)
-            batch.attn_edge_type = torch.stack(edge_type)  # (B, 1, N, N)
-            batch.spatial_pos = torch.stack(spatial_pos)  # (B, N, N)
-            batch.max_n = max_n
         labels_batch = torch.stack(labels)
         return (graph_1_data_batch,graph_2_data_batch), labels_batch
+
+
+class TraceDataLoader(DataLoader):
+    def __init__(self, dataset, batch_size=1, shuffle=False, **kwargs):
+        super().__init__(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=self.collate_fn, **kwargs)
+
+    def collate_fn(self, batch):
+        graph_1_data_list = []
+        graph_2_data_list = []
+        Adj_1_list = []
+        Adj_2_list = []
+        labels = []
+        for (g1, g2, Adj1, Adj2), label in batch:
+            graph_1_data_list.append(g1)
+            graph_2_data_list.append(g2)
+            Adj_1_list.append(Adj1)
+            Adj_2_list.append(Adj2)
+            if isinstance(label, float):
+                labels.append(torch.tensor(label))
+            else:
+                labels.append(label)
+        #inspect_batch(graph_1_data_list)
+        graph_1_data_batch = Batch.from_data_list(graph_1_data_list)
+        graph_2_data_batch = Batch.from_data_list(graph_2_data_list)
+
+        labels_batch = torch.stack(labels)
+        return (graph_1_data_batch,graph_2_data_batch,Adj_1_list,Adj_2_list), labels_batch
 
 class GraphormerDataLoader(DataLoader):
     def __init__(self, dataset, batch_size=1, shuffle=False, **kwargs):
@@ -257,33 +253,23 @@ class GraphormerDataLoader(DataLoader):
         graph_1_data_list = []
         graph_2_data_list = []
         labels = []
-        for (g1, g2), label in batch:
+        for (g1, g2, _, _), label in batch:
+            g1.x = g1.x.int()
+            g2.x = g2.x.int()
             graph_1_data_list.append(g1)
             graph_2_data_list.append(g2)
             labels.append(label)
         #inspect_batch(graph_1_data_list)
-        graph_1_data_batch = Batch.from_data_list(graph_1_data_list,exclude_keys=['attn_bias', 'attn_edge_type', 'spatial_pos'])
-        graph_2_data_batch = Batch.from_data_list(graph_2_data_list,exclude_keys=['attn_bias', 'attn_edge_type', 'spatial_pos'])
+        graph_1_data_batch = Batch.from_data_list(graph_1_data_list)
+        graph_2_data_batch = Batch.from_data_list(graph_2_data_list)
         labels_batch = torch.stack(labels)
-        attn_bias = []
-        edge_type = []
-        spatial_pos = []
-        PAD_VAL_BIAS = 0
-        PAD_VAL_EDGETY = 0
-        PAD_VAL_SPOS = torch.inf
-        for data_list, batch in zip([graph_1_data_list,graph_2_data_list],[graph_1_data_batch,graph_2_data_batch]):
-            max_n = max(d.num_nodes for d in data_list)
-            for d in data_list:
-                attn_bias.append(pad_square(d.attn_bias, max_n, PAD_VAL_BIAS))
-                edge_type.append(pad_square(d.attn_edge_type, max_n, PAD_VAL_EDGETY))
-                spatial_pos.append(pad_square(d.spatial_pos, max_n, PAD_VAL_SPOS))
 
-            batch.attn_bias = torch.stack(attn_bias)  # (B, 1, N, N)
-            batch.attn_edge_type = torch.stack(edge_type)  # (B, 1, N, N)
-            batch.spatial_pos = torch.stack(spatial_pos)  # (B, N, N)
-            batch.max_n = max_n
-        graph_1_data_batch.x = to_dense_batch(graph_1_data_batch.x,graph_1_data_batch.batch)[0]
-        graph_2_data_batch.x = to_dense_batch(graph_2_data_batch.x,graph_2_data_batch.batch)[0]
+        graph_1_data_batch.x = to_dense_batch(graph_1_data_batch.x,graph_1_data_batch.batch, max_num_nodes=max_nodes)[0]
+        graph_2_data_batch.x = to_dense_batch(graph_2_data_batch.x,graph_2_data_batch.batch, max_num_nodes=max_nodes)[0]
+        graph_1_data_batch.in_degree = to_dense_batch(graph_1_data_batch.in_degree, graph_1_data_batch.batch, max_num_nodes=max_nodes)[0]
+        graph_2_data_batch.in_degree = to_dense_batch(graph_2_data_batch.in_degree, graph_2_data_batch.batch, max_num_nodes=max_nodes)[0]
+        graph_1_data_batch.out_degree = to_dense_batch(graph_1_data_batch.out_degree, graph_1_data_batch.batch, max_num_nodes=max_nodes)[0]
+        graph_2_data_batch.out_degree = to_dense_batch(graph_2_data_batch.out_degree, graph_2_data_batch.batch, max_num_nodes=max_nodes)[0]
         return (graph_1_data_batch, graph_2_data_batch), labels_batch
 
 if __name__ == "__main__":

@@ -14,8 +14,8 @@ repo_root = pathlib.Path(__file__).resolve().parents[1]
 
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
-PATH1 = "../Graphormer"
-PATH3 = "../Graphormer/fairseq"
+PATH1 = "./Graphormer"
+PATH3 = "./Graphormer/fairseq"
 sys.path.append(PATH1)
 sys.path.append(PATH3)
 import torch, torch.nn as nn
@@ -31,13 +31,15 @@ from collections import defaultdict
 import time
 
 from utils import EarlyStopper, cleanup, pad_sparse_matrix, average_gradients
-from Dataset import GraphPairDataset, CustomDataLoader, load_samples, create_data, ReadingGraphPairs
+from Dataset import GraphPairDataset, CustomDataLoader, load_samples, create_data, ReadingGraphPairs, \
+    GraphormerDataLoader, TraceDataLoader
 from Siamese import Siamese, SiamesePLE
 from model import SimPLELoss
 from tqdm import tqdm
 import socket
 
-def run_epoch(model, loader, rank, optimizer=None, PLE=False):
+
+def run_epoch(model, loader, rank, optimizer=None, PLE=False, depth_co=0.3, trace=False):
     train = optimizer is not None
     if train:
         model.train()
@@ -48,23 +50,37 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
     running_loss, all_logits, all_labels, preds = 0.0, [], [], []
     if not PLE:
         loss_fn = nn.BCELoss()
-        for (g1, g2), labels in loader:
-            g1, g2, labels = (x.to(rank) for x in (g1, g2, labels))
-            if train:
-                logits = model((g1, g2))
-            else:
-                with torch.no_grad():
+        for data, labels in loader:
+            if not trace:
+                g1, g2 = (x.to(rank) for x in data)
+                labels = labels.to(rank)
+                if train:
                     logits = model((g1, g2))
-            loss = loss_fn(logits, labels)
+                else:
+                    with torch.no_grad():
+                        logits = model((g1, g2))
+                loss = loss_fn(logits, labels)
+            else:
+                g1, g2, Adj1, Adj2 = data
+                g1, g2 = (x.to(rank) for x in (g1, g2))
+                labels = labels.to(rank)
+                if train:
+                    logits, gates = model((g1, g2, Adj1, Adj2))
+                else:
+                    with torch.no_grad():
+                        logits, gates = model((g1, g2, Adj1, Adj2))
+                loss = loss_fn(logits, labels)
+                if gates != []:
+                    #print(gates)
+                    for i in range(len(gates)):
+                        #print(gates[i])
+                        loss += depth_co * gates[i] * (2**(i - 1))  # linear or exponential?
+
             if train:
                 model.zero_grad()
                 loss.backward()
                 # average_gradients(model)
                 optimizer.step()
-                with torch.no_grad():
-                    model.eval()
-                    logits = model((g1, g2))
-                    model.train()
 
             batch_loss = loss.detach()
             dist.all_reduce(batch_loss, op=dist.ReduceOp.SUM)
@@ -74,7 +90,7 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
         logits = torch.cat(all_logits)
         preds = (logits > 0.5)
     else:
-        loss_fn = SimPLELoss(b=-0.99,b_theta=0.005)
+        loss_fn = SimPLELoss(b=-0.99, b_theta=0.005)
         for (g1, g2), labels in loader:
             g1, g2, labels = (x.to(rank) for x in (g1, g2, labels))
             if train:
@@ -90,10 +106,6 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
                 loss.backward()
                 # average_gradients(model)
                 optimizer.step()
-                with torch.no_grad():
-                    model.eval()
-                    z1, z2 = model(((g1, g2), labels))
-                    model.train()
 
             inner = (z1 * z2).sum(dim=-1)
             norm1 = z1.norm(dim=-1)
@@ -107,7 +119,7 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
         preds = torch.cat(preds)
 
     labels = torch.cat(all_labels)
-    #if rank == 0:
+    # if rank == 0:
     #    print("pred", preds.sum(), preds[:4])
     #    print("label",labels.sum(), labels[:4])
     preds_list = [torch.empty_like(preds) for _ in range(world_size)]
@@ -118,8 +130,8 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
     if rank == 0:  # metrics only once
         preds_all = torch.cat(preds_list).cpu()
         labels_all = torch.cat(labels_list).cpu()
-        #print("pred", preds_all.sum(), preds_all[:20])
-        #print("label", labels_all.sum(), labels_all[:20])
+        # print("pred", preds_all.sum(), preds_all[:20])
+        # print("label", labels_all.sum(), labels_all[:20])
         acc = accuracy_score(labels_all, preds_all)
         f1 = f1_score(labels_all, preds_all)
         mean_loss = running_loss / len(loader)
@@ -129,11 +141,13 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False):
     metrics = torch.tensor([mean_loss, acc, f1], device='cuda')
     dist.broadcast(metrics, src=0)
     mean_loss, acc, f1 = metrics.tolist()
+
+    #print(gates)
     return mean_loss, acc, f1
 
 
-def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_name="syn", epochs=15, bs=32,
-                      num_layers=1, workers=4, seed=42, PLE=False, rank=0, world_size=4, stop_mode="acc"):
+def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_name="syn", epochs=50, bs=32,
+                      num_layers=1, workers=4, seed=42, PLE=False, rank=0, world_size=4, stop_mode="loss"):
     train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True)
     test_sampler = DistributedSampler(test_ds, shuffle=False)
 
@@ -141,9 +155,14 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
                      num_workers=workers,
                      persistent_workers=False,
                      pin_memory=True)
-
-    train_loader = CustomDataLoader(train_ds, sampler=train_sampler, drop_last=True, **dl_kwargs)
-    test_loader = CustomDataLoader(test_ds, sampler=test_sampler, **dl_kwargs)
+    if model_name == "Trace":
+        Loader = TraceDataLoader
+    elif model_name == "Graphormer":
+        Loader = GraphormerDataLoader
+    else:
+        Loader = CustomDataLoader
+    train_loader = Loader(train_ds, sampler=train_sampler, drop_last=True, **dl_kwargs)
+    test_loader = Loader(test_ds, sampler=test_sampler, **dl_kwargs)
 
     if rank == 0:
         os.makedirs("runs", exist_ok=True)
@@ -160,26 +179,32 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
     else:
         base = SiamesePLE(model_name, lr=lr, wd=wd, proj_layers=num_layers)
 
-    base = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base)
+    # base = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base)
     model = base.to(rank)
 
     # if rank == 0:
     #    print("start ddp")
-    model = DDP(model, device_ids=[rank])
+    model = DDP(model, device_ids=[rank], find_unused_parameters=True)
     if rank == 0:
         print("model parallelized")
     optimizer = base.configure_optimizers()  # DDP wraps only fwd/bwd
     scheduler = ReduceLROnPlateau(optimizer, "min", factor=0.5, patience=2)
 
     history = defaultdict(list)
-
+    patience, bad_epochs, wait = 7, 5, 0
+    if stop_mode == "acc":
+        stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='max')
+    elif stop_mode == "loss":
+        stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='min')
+    else:
+        stopper = None
     for epoch in tqdm(range(1, epochs + 1), desc=f"cfg={lr, wd}"):
         # print(f"rank {rank} reach {epoch}")
         train_sampler.set_epoch(epoch)
 
-        #te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE)
-        tr_loss, tr_acc, tr_f1 = run_epoch(model, train_loader, rank, optimizer, PLE=PLE)
-        te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE)
+        te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE, trace=model_name == "Trace")
+        tr_loss, tr_acc, tr_f1 = run_epoch(model, train_loader, rank, optimizer, PLE=PLE, trace=model_name == "Trace")
+        #te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE, trace=model_name == "Trace")
 
         scheduler.step(tr_loss)
         history["train_loss"].append(tr_loss)
@@ -193,19 +218,16 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
                 log = f"[{epoch:02d}/{epochs}] | train loss {tr_loss:.3f} | acc {tr_acc:.3f} | f1 {tr_f1:.3f} | val loss {te_loss:.3f} | acc {te_acc:.3f} | f1 {te_f1:.3f}\n"
                 f.write(log)
 
-        patience, bad_epochs, wait = 7, 3, 0
         if stop_mode == "acc":
-            stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='max')
             if stopper.step(tr_acc, te_acc):
                 print(f"No learning stop at epoch {epoch}")
                 break
         elif stop_mode == "loss":
-            stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='min')
             if stopper.step(tr_loss, te_loss):
                 print(f"No learning stop at epoch {epoch}")
                 break
 
-        if tr_acc >= 0.97 and te_acc > 0.97:
+        if tr_acc >= 0.99 and te_acc > 0.99:
             print(f"Finished learning stop at epoch {epoch}")
             break
 
@@ -222,7 +244,7 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
 
 def launch(data, model, PLE):
     GRID = list(itertools.product(
-        [1e-4, 3e-4, 1e-3],  # lrs
+        [1e-4, 3e-4],  # lrs
         [0, 4e-5, 1e-4],  # wds
     ))
 
@@ -247,7 +269,7 @@ def launch(data, model, PLE):
     if rank == 0:
         pos_count = 0
         neg_count = 0
-        for (g1,g2), label in train_ds:
+        for (g1, g2, _, _), label in train_ds:
             if label.item() == 0:
                 neg_count += 1
             else:

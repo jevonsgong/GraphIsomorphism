@@ -4,8 +4,9 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 import sys, os
 
-#from Graphormer.graphormer.models import GraphormerModel
-from model import GINModel, SimPLELoss, momentum_update, GCN_RNI, GCN_Pooling, GraphMatchingNetwork
+from Graphormer.graphormer.models import GraphormerModel
+from Graphormer.graphormer.modules import GraphormerGraphEncoder
+from model import GINModel, SimPLELoss, GCN_RNI, GCN_Pooling, GMNModel, GCN, rGIN, BFS_Refine
 from iter import CanonicalNet_nolearn
 from torch_geometric.nn import global_mean_pool, Set2Set, global_add_pool
 from argparse import Namespace
@@ -13,34 +14,46 @@ import copy
 
 
 class GraphEncoder(nn.Module):
-    def __init__(self, model=None, in_dim=256):
+    def __init__(self, model=None, in_dim=256, bs=32):
         super().__init__()
         self.model = model
         if model == "Graphormer":
             args = Namespace()
-            args.max_nodes = in_dim
+            args.max_nodes = 512
             args.num_classes = 2
             args.num_atoms = 100
-            args.num_in_degree = 200
-            args.num_out_degree = 200
+            args.num_in_degree = 512
+            args.num_out_degree = 512
             args.num_edges = 500
-            args.num_spatial = 60
+            args.num_spatial = 100
             args.num_edge_dis = 60
             args.edge_type = 4
             args.multi_hop_max_dist = 20
-            args.pre_layernorm = True
+            args.encoder_embed_dim = 256
+            args.encoder_attention_heads = 4
+            args.pre_layernorm = False
             args.pretrained_model_name = "none"
-            #self.encoder = GraphormerModel.build_model(args, task=None)
+            self.encoder = GraphormerGraphEncoder(num_atoms=args.num_atoms,num_in_degree=args.num_in_degree,num_out_degree=args.num_out_degree,
+                                                  num_edges=args.num_edges,num_spatial=args.num_spatial,num_edge_dis=args.num_edge_dis,
+                                                  edge_type="",multi_hop_max_dist=args.multi_hop_max_dist,num_encoder_layers=6,
+                                                  embedding_dim=args.encoder_embed_dim,num_attention_heads=args.encoder_attention_heads,
+                                                  pre_layernorm=args.pre_layernorm,)
+            #self.encoder = GraphormerModel.build_model(args,task=None)
         elif model == "GIN":
             self.encoder = GINModel(in_dim, 256, 256, 2)
+        elif model == "RGIN":
+            self.encoder = rGIN(in_dim,256,256,2)
+        elif model == "GCN":
+            self.encoder = GCN(in_dim, hidden_dim=256, num_layers=4)
         elif model == "GCN-RNI":
-            self.encoder = GCN_RNI(in_dim, hidden_dim=256,
-                                   num_layers=2, rni_dim=32)
+            self.encoder = GCN_RNI(in_dim, hidden_dim=256, num_layers=4)
         elif model == "GCN-Pooling":
             self.encoder = GCN_Pooling(in_dim, hidden_dim=256,
                                        pool_ratio=0.5)
         elif model == "GMN":
-            self.encoder = GraphMatchingNetwork(in_dim,hidden_dim=256,out_dim=256,num_layers=2)
+            self.encoder = GMNModel(in_dim, hidden=256, out_dim=256, num_layers=2)
+        elif model == "Trace":
+            self.encoder = BFS_Refine(in_dim, hidden=256, num_layers=3, bs=bs, max_width=2, max_nodes=256)
         else:
             print("No recognized model!")
 
@@ -48,18 +61,23 @@ class GraphEncoder(nn.Module):
         if self.model == "GIN":
             r = self.encoder(graph.x, graph.edge_index)
         elif self.model == "Graphormer":
-            r = self.encoder(graph)
+            r = self.encoder(graph)[1]
+        elif self.model == "GCN":
+            r = self.encoder(graph.x, graph.edge_index)
         elif self.model == "GCN-RNI":
             r = self.encoder(graph.x, graph.edge_index)
-
         elif self.model == "GCN-Pooling":
             r, batch = self.encoder(graph.x, graph.edge_index, graph.batch)
             return r, batch
         elif self.model == "GMN":
             # graph is a tuple: (g1, g2)
             g1, g2 = graph
-            r1, r2, batch1, batch2 = self.encoder(g1, g2)
-            return r1, r2, batch1, batch2
+            r1, r2 = self.encoder(g1, g2)
+            return r1, r2
+        elif self.model == "Trace":
+            data, Adj = graph
+            r, trace, color, gates = self.encoder(data, Adj)
+            return r, trace, color, gates
         else:
             r = None
         return r
@@ -97,54 +115,64 @@ class Siamese(nn.Module):
         #self.loss_fn = nn.BCEWithLogitsLoss()
         self.lr = lr
         self.weight_decay = weight_decay
-        self.readout = global_add_pool
+        if self.model != "Graphormer":
+            self.readout = global_add_pool
 
     # ----- forward pass -------------------------------------------------
     def encode(self, batch):
         return self.encoder(batch)
 
     def forward(self, pair):
-        g1, g2 = pair
-        if self.model == "GMN":
-            h1, h2, batch1, batch2 = self.encoder((g1, g2))
-            h1 = self.readout(h1, batch1)
-            h2 = self.readout(h2, batch2)
-            #print(h1.shape)
-        elif self.model == "GCN-Pooling":
-            h1, batch1 = self.encoder(g1)
-            h2, batch2 = self.encoder(g2)
-            h1 = self.readout(h1, batch1)
-            h2 = self.readout(h2, batch2)
-            #print(h1.shape)
+        if self.model != "Trace":
+            g1, g2 = pair
+            if self.model == "GMN":
+                h1, h2 = self.encoder((g1, g2))
+                h1 = self.readout(h1, g1.batch)
+                h2 = self.readout(h2, g2.batch)
+                #print(h1.shape)
+            elif self.model == "GCN-Pooling":
+                h1, batch1 = self.encoder(g1)
+                h2, batch2 = self.encoder(g2)
+                h1 = self.readout(h1, batch1)
+                h2 = self.readout(h2, batch2)
+                #print(h1.shape)
+            elif self.model == "Graphormer":
+                h1 = self.encoder(g1)
+                h2 = self.encoder(g2)
+            else:
+                h1 = self.encoder(g1)
+                h2 = self.encoder(g2)
+                h1 = self.readout(h1, g1.batch)
+                h2 = self.readout(h2, g2.batch)
+            z = (h1 - h2).abs()
+            # print(z.sum(dim=-1))
+            if self.learn_classifier:
+                logits = torch.sigmoid(-self.classifier(z).squeeze(-1))
+            else:
+                logits = torch.exp(-z.sum(dim=-1).squeeze(-1))
+
+            return logits
         else:
-            h1 = self.encoder(g1)
-            h2 = self.encoder(g2)
-            h1 = self.readout(h1, g1.batch)
-            h2 = self.readout(h2, g2.batch)
+            g1, g2, Adj1, Adj2 = pair
+            r1, trace1, color1, gates = self.encoder((g1, Adj1))
+            r2, trace2, color2, gates = self.encoder((g2, Adj2))
+            #if r1.device == torch.device("cuda:0"):
+                #print("trace1",trace1)
+                #print("trace2",trace2)
+                #print("color1",color1)
+                #print("color2",color2)
+            h1 = self.readout(r1, g1.batch)
+            h2 = self.readout(r2, g2.batch)
+            #print(gates)
+            z = (h1 - h2).abs()
+            #print(z.sum(dim=1))
+            # print(z.sum(dim=-1))
+            if self.learn_classifier:
+                logits = torch.sigmoid(-self.classifier(z).squeeze(-1))
+            else:
+                logits = torch.exp(-z.sum(dim=-1).squeeze(-1))
 
-        z = (h1-h2).abs()
-        #print(z.sum(dim=-1))
-        if self.learn_classifier:
-            logits = torch.sigmoid(-self.classifier(z).squeeze(-1))
-        else:
-            logits = torch.exp(-z.sum(dim=-1).squeeze(-1))
-
-        return logits
-
-    # ----- training / validation ----------------------------------------
-    def _shared_step(self, batch):
-        (g1, g2), label = batch  # label in {0,1}
-        logits = self((g1, g2))
-        loss = self.loss_fn(logits, label.float())
-        preds = torch.sigmoid(logits) > 0.5
-        acc = (preds == label.bool()).float().mean()
-        return loss, acc
-
-    def training_step(self, batch, _):
-        loss, acc = self._shared_step(batch)
-        self.log('train_loss', loss, prog_bar=True)
-        self.log('train_acc', acc, prog_bar=True)
-        return loss
+            return logits, gates
 
     # ----- optimizer ----------------------------------------------------
     def configure_optimizers(self):
@@ -173,7 +201,7 @@ class SiamesePLE(nn.Module):
             if l < proj_layers - 1:
                 mlp.append(nn.ReLU(inplace=True))
         self.project = nn.Sequential(*mlp)
-        self.readout = Set2Set(emb_dim, processing_steps=3)
+        self.readout = global_add_pool
 
         #self.criterion = SimPLELoss(r=r, alpha=alpha, b=b, b_theta=b_theta)
         self.lr = lr
@@ -202,19 +230,32 @@ class SiamesePLE(nn.Module):
         h = self.project(h)
         return F.normalize(h, dim=-1)      # unit-norm vector
 
+    def _encode_Graphormer(self, g, encoder):
+        h = encoder(g)
+        return F.normalize(h, dim=-1)
+
+    def _encode_Trace(self, g, Adj, encoder):
+        h, trace, color = encoder((g,Adj))
+        return F.normalize(h, dim=-1)
+
     def forward(self, batch):
-        """Return (z_q1, z_q2, z_k1, z_k2)"""
-        (g1, g2), same_label = batch
-        if self.model == "GCN-Pooling":
-            z1 = self._encode_GCN_Pooling(g1, self.encoder)
-            z2 = self._encode_GCN_Pooling(g2, self.encoder)
-
-        elif self.model == "GMN":
-            z1, z2 = self._encode_GMN(g1, g2, self.encoder)
-
+        if self.model != "Trace":
+            (g1, g2), same_label = batch
+            if self.model == "GCN-Pooling":
+                z1 = self._encode_GCN_Pooling(g1, self.encoder)
+                z2 = self._encode_GCN_Pooling(g2, self.encoder)
+            elif self.model == "GMN":
+                z1, z2 = self._encode_GMN(g1, g2, self.encoder)
+            elif self.model == "Graphormer":
+                z1 = self._encode_Graphormer(g1, self.encoder)
+                z2 = self._encode_Graphormer(g2, self.encoder)
+            else:
+                z1 = self._encode(g1, self.encoder)
+                z2 = self._encode(g2, self.encoder)
         else:
-            z1 = self._encode(g1, self.encoder)
-            z2 = self._encode(g2, self.encoder)
+            g1, g2, Adj1, Adj2 = batch
+            z1 = self._encode_Trace(g1, Adj1, self.encoder)
+            z2 = self._encode_Trace(g2, Adj2, self.encoder)
 
         return z1, z2
 

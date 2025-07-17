@@ -1,7 +1,5 @@
 import torch, numpy as np, scipy.sparse as sp
 from torch import nn
-from Exact_Algorithm import test
-from Exact_Algorithm.main import R
 import networkx as nx
 
 
@@ -234,7 +232,7 @@ class WLStep(nn.Module):
 
 
 
-
+"""
 if __name__ == "__main__":
     device = torch.cuda.device("cuda:0") if torch.cuda.is_available() else "cpu"
     test_case_generator = test.generate_infinite_test_cases(10,15)
@@ -258,4 +256,4 @@ if __name__ == "__main__":
                 pi_1 = R(v, G, pi_0)
                 pi_1_m = WLRefine.IterateWL(pi_0_m, adj, v)
                 print("algo refined color", pi_1[0])
-                print("model refined color", pi_1_m[0])
+                print("model refined color", pi_1_m[0])"""
