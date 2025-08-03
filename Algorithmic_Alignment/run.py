@@ -39,7 +39,7 @@ from tqdm import tqdm
 import socket
 
 
-def run_epoch(model, loader, rank, optimizer=None, PLE=False, depth_co=0.3, trace=False):
+def run_epoch(model, loader, rank, optimizer=None, PLE=False, depth_co=0.01, trace=False):
     train = optimizer is not None
     if train:
         model.train()
@@ -74,7 +74,7 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False, depth_co=0.3, trac
                     #print(gates)
                     for i in range(len(gates)):
                         #print(gates[i])
-                        loss += depth_co * gates[i] * (2**(i - 1))  # linear or exponential?
+                        loss += depth_co * gates[i] * ((i - 1))  # linear or exponential?
 
             if train:
                 model.zero_grad()
@@ -143,11 +143,15 @@ def run_epoch(model, loader, rank, optimizer=None, PLE=False, depth_co=0.3, trac
     mean_loss, acc, f1 = metrics.tolist()
 
     #print(gates)
-    return mean_loss, acc, f1
+    if not trace:
+        return mean_loss, acc, f1
+    else:
+        return mean_loss, acc, f1, gates
 
 
-def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_name="syn", epochs=50, bs=32,
-                      num_layers=1, workers=4, seed=42, PLE=False, rank=0, world_size=4, stop_mode="loss"):
+
+def run_single_config(train_ds, test_ds, lr, wd, width=2, depth=64, jid=0, model_name="GIN", data_name="syn", epochs=50, bs=32,
+                      max_nodes=256, hidden=256, num_layers=1, workers=4, seed=42, PLE=False, rank=0, world_size=4, stop_mode="loss"):
     train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True)
     test_sampler = DistributedSampler(test_ds, shuffle=False)
 
@@ -166,8 +170,12 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
 
     if rank == 0:
         os.makedirs("runs", exist_ok=True)
-        with open(f"runs/log_{model_name}_{data_name}_{PLE}_{jid}.txt", "w") as f:
-            f.write(f"lr:{lr}, wd:{wd}, layers:{num_layers}, bs:{bs}\n")
+        if model_name != "Trace":
+            with open(f"runs/log_{model_name}_{data_name}_{PLE}_{jid}.txt", "w") as f:
+                f.write(f"lr:{lr}, wd:{wd}, max_nodes:{max_nodes}, hidden:{hidden}, bs:{bs}\n")
+        else:
+            with open(f"runs/log_{model_name}_{data_name}_{PLE}_{jid}_{depth}_{width}.txt", "w") as f:
+                f.write(f"lr:{lr}, wd:{wd}, max_nodes:{max_nodes}, hidden:{hidden}, bs:{bs}\n")
 
     seed = seed
     random.seed(seed)
@@ -175,9 +183,9 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
 
     # -------- model --------
     if not PLE:
-        base = Siamese(model_name, lr=lr, weight_decay=wd, num_layers=num_layers, learn_classifier=True)
+        base = Siamese(model_name, in_dim = max_nodes, hidden=hidden, bs=bs, lr=lr, weight_decay=wd, depth=depth, width=width, learn_classifier=True)
     else:
-        base = SiamesePLE(model_name, lr=lr, wd=wd, proj_layers=num_layers)
+        base = SiamesePLE(model_name, in_dim = max_nodes, hidden=hidden, bs=bs, lr=lr, wd=wd, depth=depth, width=width, proj_layers=num_layers)
 
     # base = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base)
     model = base.to(rank)
@@ -198,13 +206,18 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
         stopper = EarlyStopper(patience=patience, bad_epochs=bad_epochs, mode='min')
     else:
         stopper = None
+    trace = model_name == "Trace"
     for epoch in tqdm(range(1, epochs + 1), desc=f"cfg={lr, wd}"):
         # print(f"rank {rank} reach {epoch}")
         train_sampler.set_epoch(epoch)
 
-        te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE, trace=model_name == "Trace")
-        tr_loss, tr_acc, tr_f1 = run_epoch(model, train_loader, rank, optimizer, PLE=PLE, trace=model_name == "Trace")
+        if not trace:
+            te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE, trace=trace)
+            tr_loss, tr_acc, tr_f1 = run_epoch(model, train_loader, rank, optimizer, PLE=PLE, trace=trace)
         #te_loss, te_acc, te_f1 = run_epoch(model, test_loader, rank, PLE=PLE, trace=model_name == "Trace")
+        else:
+            te_loss, te_acc, te_f1, _ = run_epoch(model, test_loader, rank, PLE=PLE, trace=trace)
+            tr_loss, tr_acc, tr_f1, gates = run_epoch(model, train_loader, rank, optimizer, PLE=PLE, trace=trace)
 
         scheduler.step(tr_loss)
         history["train_loss"].append(tr_loss)
@@ -214,10 +227,14 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
         history["train_f1"].append(tr_f1)
         history["test_f1"].append(te_f1)
         if rank == 0:
-            with open(f"runs/log_{model_name}_{data_name}_{PLE}_{jid}.txt", "a") as f:
-                log = f"[{epoch:02d}/{epochs}] | train loss {tr_loss:.3f} | acc {tr_acc:.3f} | f1 {tr_f1:.3f} | val loss {te_loss:.3f} | acc {te_acc:.3f} | f1 {te_f1:.3f}\n"
-                f.write(log)
-
+            if model_name != "Trace":
+                with open(f"runs/log_{model_name}_{data_name}_{PLE}_{jid}.txt", "a") as f:
+                    log = f"[{epoch:02d}/{epochs}] | train loss {tr_loss:.3f} | acc {tr_acc:.3f} | f1 {tr_f1:.3f} | val loss {te_loss:.3f} | acc {te_acc:.3f} | f1 {te_f1:.3f}\n"
+                    f.write(log)
+            else:
+                with open(f"runs/log_{model_name}_{data_name}_{PLE}_{jid}_{depth}_{width}.txt", "a") as f:
+                    log = f"[{epoch:02d}/{epochs}] | train loss {tr_loss:.3f} | acc {tr_acc:.3f} | f1 {tr_f1:.3f} | val loss {te_loss:.3f} | acc {te_acc:.3f} | f1 {te_f1:.3f}\n"
+                    f.write(log)
         if stop_mode == "acc":
             if stopper.step(tr_acc, te_acc):
                 print(f"No learning stop at epoch {epoch}")
@@ -227,10 +244,12 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
                 print(f"No learning stop at epoch {epoch}")
                 break
 
-        if tr_acc >= 0.99 and te_acc > 0.99:
+        if tr_acc >= 0.9 and te_acc > 0.99:
             print(f"Finished learning stop at epoch {epoch}")
             break
-
+    if trace:
+        with open(f"runs/log_{model_name}_{data_name}_{PLE}_{jid}_{depth}_{width}.txt", "a") as f:
+            f.write(f"final gates:{gates}")
     # print(f"rank {rank} reach barrier")
     dist.barrier()
     del model, optimizer, scheduler, train_loader, train_sampler, test_loader, test_sampler
@@ -242,10 +261,10 @@ def run_single_config(train_ds, test_ds, lr, wd, jid=0, model_name="GIN", data_n
     return history["train_acc"][idx], history["test_acc"][idx]
 
 
-def launch(data, model, PLE):
+def launch(data, model, PLE, hidden, depth, width):
     GRID = list(itertools.product(
-        [1e-4, 3e-4],  # lrs
-        [0, 4e-5, 1e-4],  # wds
+        [3e-4],  # lrs
+        [4e-5, 1e-4],  # wds
     ))
 
     rank = int(os.environ["RANK"])
@@ -280,8 +299,8 @@ def launch(data, model, PLE):
     for job_id, (lr, wd) in enumerate(GRID):
         if rank == 0:
             print(f"job:{job_id}, lr:{lr},wd:{wd} starts")
-        tr_acc, te_acc = run_single_config(train_ds=train_ds, test_ds=test_ds,
-                                           lr=lr, wd=wd, jid=job_id, data_name=data,
+        tr_acc, te_acc = run_single_config(train_ds=train_ds, test_ds=test_ds, depth=depth, width=width,
+                                           hidden=hidden, lr=lr, wd=wd, jid=job_id, data_name=data,
                                            model_name=model, PLE=PLE, rank=rank)
         if rank == 0:
             tr_acc_list.append(tr_acc)
@@ -306,6 +325,9 @@ if __name__ == "__main__":
     p.add_argument("--model", type=str, default="GIN")
     p.add_argument("--PLE", type=str, default="False")
     p.add_argument("--data", type=str, default="syn")
+    p.add_argument("--hidden", type=int, default=256)
+    p.add_argument("--depth", type=int, default=128)
+    p.add_argument("--width", type=int, default=1)
     args = p.parse_args()
 
     if args.PLE == "False":
@@ -315,4 +337,4 @@ if __name__ == "__main__":
     else:
         PLE = False
     print(f"Training on config:{args.model},{PLE},{args.data} starts")
-    launch(args.data, args.model, PLE)
+    launch(args.data, args.model, PLE, args.hidden, args.depth, args.width)

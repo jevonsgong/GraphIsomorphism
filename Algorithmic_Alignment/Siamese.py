@@ -14,9 +14,13 @@ import copy
 
 
 class GraphEncoder(nn.Module):
-    def __init__(self, model=None, in_dim=256, bs=32):
+    def __init__(self, model=None, params=None):
         super().__init__()
         self.model = model
+        if model == "Trace":
+            in_dim, hidden_dim, bs, depth, width = params
+        else:
+            in_dim, hidden_dim, bs = params
         if model == "Graphormer":
             args = Namespace()
             args.max_nodes = 512
@@ -44,16 +48,16 @@ class GraphEncoder(nn.Module):
         elif model == "RGIN":
             self.encoder = rGIN(in_dim,256,256,2)
         elif model == "GCN":
-            self.encoder = GCN(in_dim, hidden_dim=256, num_layers=4)
+            self.encoder = GCN(in_dim, hidden_dim=hidden_dim, num_layers=4)
         elif model == "GCN-RNI":
-            self.encoder = GCN_RNI(in_dim, hidden_dim=256, num_layers=4)
+            self.encoder = GCN_RNI(in_dim, hidden_dim=hidden_dim, num_layers=4)
         elif model == "GCN-Pooling":
-            self.encoder = GCN_Pooling(in_dim, hidden_dim=256,
+            self.encoder = GCN_Pooling(in_dim, hidden_dim=hidden_dim,
                                        pool_ratio=0.5)
         elif model == "GMN":
-            self.encoder = GMNModel(in_dim, hidden=256, out_dim=256, num_layers=2)
+            self.encoder = GMNModel(in_dim, hidden=hidden_dim, out_dim=hidden_dim, num_layers=2)
         elif model == "Trace":
-            self.encoder = BFS_Refine(in_dim, hidden=256, num_layers=3, bs=bs, max_width=2, max_nodes=256)
+            self.encoder = BFS_Refine(in_dim, hidden=hidden_dim, num_layers=depth, bs=bs, max_width=width, max_nodes=in_dim)
         else:
             print("No recognized model!")
 
@@ -87,27 +91,32 @@ class Siamese(nn.Module):
     def __init__(self,
                  model,
                  num_layers: int = 1,
+                 in_dim: int = 256,
                  hidden: int = 256,
+                 bs: int = 32,
                  lr: float = 3e-4,
                  weight_decay: float = 4e-5,
+                 depth = 64,
+                 width = 2,
                  learn_classifier: bool = False,
                  ):
         super().__init__()
 
         self.model = model
-        self.encoder = GraphEncoder(model)
+        if model == "Trace":
+            params = (in_dim, hidden, bs, depth, width)
+            self.encoder = GraphEncoder(model, params)
+        else:
+            params = (in_dim, hidden, bs)
+            self.encoder = GraphEncoder(model, params)
         self.linear = torch.nn.ModuleList()
         self.batch_norms = torch.nn.ModuleList()
         self.num_layer = num_layers
-        self.emb_dim = hidden
-        """        for layer in range(self.num_layer):
-            self.linear.append(torch.nn.Linear(self.emb_dim*2, self.emb_dim*2))
-            self.batch_norms.append(torch.nn.BatchNorm1d(self.emb_dim*2))"""
 
         self.learn_classifier = learn_classifier
         if self.learn_classifier:
             self.classifier = nn.Sequential(
-                #nn.Linear(self.emb_dim, hidden),
+                #nn.Linear(hidden, hidden),
                 #nn.ReLU(),
                 nn.Linear(hidden, 1)
             )
@@ -182,22 +191,30 @@ class SiamesePLE(nn.Module):
     def __init__(
         self,
         model: str,
-        emb_dim: int = 256,
+        in_dim: int = 256,
+        hidden: int = 256,
+        bs: int = 32,
         proj_layers: int = 1,
+        depth = 64,
+        width = 2,
         lr: float = 3e-4,
         wd: float = 4e-5
     ) -> None:
         super().__init__()
-        # online / target encoders ------------------------------------------------
-        backbone = GraphEncoder(model)
+        if model == "Trace":
+            params = (in_dim, hidden, bs, depth, width)
+            backbone = GraphEncoder(model, params)
+        else:
+            params = (in_dim, hidden, bs)
+            backbone = GraphEncoder(model, params)
         self.model = model
         self.encoder = backbone
 
         # 2-layer MLP projection head -------------------------------------------
         mlp: list[nn.Module] = []
         for l in range(proj_layers):
-            mlp.append(nn.Linear(2*emb_dim, 2*emb_dim, bias=False))
-            mlp.append(nn.BatchNorm1d(2*emb_dim))
+            mlp.append(nn.Linear(2 * hidden, 2 * hidden, bias=False))
+            mlp.append(nn.BatchNorm1d(2 * hidden))
             if l < proj_layers - 1:
                 mlp.append(nn.ReLU(inplace=True))
         self.project = nn.Sequential(*mlp)

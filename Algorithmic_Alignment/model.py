@@ -408,6 +408,17 @@ class BFS_Refine(nn.Module):
         return pi_prime
 
     @staticmethod
+    def prune(layer_cands):
+        best_idxs = torch.argmax(torch.stack([cand.trace for cand in layer_cands]), dim=0)  # bs
+        # print(best_idxs)
+        best_x, best_color, best_trace = [], [], []
+        for i in range(len(best_idxs)):
+            best_x.append(layer_cands[best_idxs[i]].gx[i])
+            best_trace.append(layer_cands[best_idxs[i]].trace[i])
+            best_color.append(layer_cands[best_idxs[i]].color[i])
+        return [Cand(best_color, torch.cat(best_x, dim=0), best_x, torch.stack(best_trace, dim=0))]
+
+    @staticmethod
     def xxhash_all_rows(x_int: torch.Tensor) -> torch.Tensor:
         assert x_int.dtype == torch.int64
         n, d = x_int.shape
@@ -467,18 +478,23 @@ class BFS_Refine(nn.Module):
                                 ind_vs[i].append(-1)
                             discrete_count += 1
                             continue
-                        for i, v in enumerate(target_cell):  # target cell, pick first max_width ind vertex
-                            if i < self.max_width:
-                                ind_graph_color = self.individualize(graph_color, v)
-                                ind_batch_colors[i].append(ind_graph_color)
-                                ind_vs[i].append(v)
+                        else:
+                            for i, v in enumerate(target_cell):  # target cell, pick first max_width ind vertex
+                                if i < self.max_width:
+                                    ind_graph_color = self.individualize(graph_color, v)
+                                    ind_batch_colors[i].append(ind_graph_color)
+                                    ind_vs[i].append(v)
+                            if len(target_cell) < self.max_width:
+                                for j in range(len(target_cell), self.max_width):
+                                    ind_batch_colors[j].append(ind_graph_color)
+                                    ind_vs[j].append(-1)
 
                     if discrete_count == self.bs // self.world_size:  # world_size()
                         nxt = layer_cands
                         end_flag = True
                         break
                     #for batch_color in ind_batch_colors:
-                    #    print([len(graph_color) for graph_color in batch_color])
+                        #print([len(graph_color) for graph_color in batch_color])
                     ind_batch_colors = [torch.cat(each, dim=0).unsqueeze(-1).to(device) for each in ind_batch_colors if
                                         each != []]
 
@@ -490,21 +506,15 @@ class BFS_Refine(nn.Module):
                         new_color, trace, gx = self.get_colors_and_traces(x, batch, v=ind_vs[j], Adjs=Adjs, last_trace=cand.trace)
                         nxt.append(Cand(new_color, x, gx, trace))  # color,trace,gx [bs, ...]
 
-            layer_cands = nxt
+            layer_cands = self.prune(nxt)
             if gate is not None:
                 gates.append(gate)
         # if depth > 1:
         # print("depth", depth, "leaves", len(layer_cands))
         # print(layer_cands[0].trace)
-        best_idxs = torch.argmax(torch.stack([cand.trace for cand in layer_cands]), dim=0)  # bs
-        # print(best_idxs)
-        best_x, best_color, best_trace = [], [], []
-        for i in range(len(best_idxs)):
-            best_x.append(layer_cands[best_idxs[i]].gx[i])
-            best_trace.append(layer_cands[best_idxs[i]].trace[i])
-            best_color.append(layer_cands[best_idxs[i]].color[i])
+        leaf = layer_cands[0]
         # print(best_trace)
-        return torch.cat(best_x, dim=0), torch.stack(best_trace, dim=0), best_color, gates
+        return leaf.x, leaf.trace, leaf.color, gates
 
 
 class GatedGINLayer(nn.Module):
